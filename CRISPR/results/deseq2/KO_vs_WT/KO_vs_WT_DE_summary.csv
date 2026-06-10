@@ -1,0 +1,2 @@
+"contrast","comparison","min_count_filter","min_samples_filter","genes_tested_after_filtering","significant_padj","up_padj","down_padj","up_padj_lfc1","down_padj_lfc1"
+"KO_vs_WT","KO vs WT",10,3,16919,2311,975,1336,377,516

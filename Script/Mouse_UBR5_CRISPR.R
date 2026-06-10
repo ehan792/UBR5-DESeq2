@@ -1,5 +1,4 @@
 #mouse CRISPR KO mouse
-#test
 
 #############################################
 #Package download
@@ -57,67 +56,85 @@ library(AnnotationDbi)
 library(EnhancedVolcano)
 library(pheatmap)
 library(enrichplot)
+############################################################
+# Project-specific output root
+############################################################
+# All CRISPR KO/Het analysis outputs will be written inside:
+#   CRISPR/results/
+#   CRISPR/figures/
+#
+# The Data folder remains in the main project folder:
+#   Data/MouseKOCounts.csv
+############################################################
 
+output_root <- here("CRISPR")
 
-#Folder organization
+############################################################
+# Folder organization
+############################################################
+
 output_dirs <- c(
-  here("results"),
-  here("results", "deseq2"),
-  here("results", "deseq2", "het_vs_WT"),
-  here("results", "deseq2", "KO_vs_WT"),
-  here("results", "qc"),
-  here("results", "gsea"),
-  here("results", "gsea", "het_vs_WT"),
-  here("results", "gsea", "KO_vs_WT"),
-  here("figures"),
-  here("figures", "qc"),
-  here("figures", "volcano"),
-  here("figures", "volcano", "het_vs_WT"),
-  here("figures", "volcano", "KO_vs_WT"),
-  here("figures", "gsea"),
-  here("figures", "gsea", "het_vs_WT"),
-  here("figures", "gsea", "KO_vs_WT")
+  file.path(output_root, "results"),
+  file.path(output_root, "results", "deseq2"),
+  file.path(output_root, "results", "deseq2", "het_vs_WT"),
+  file.path(output_root, "results", "deseq2", "KO_vs_WT"),
+  file.path(output_root, "results", "gsea"),
+  file.path(output_root, "results", "gsea", "het_vs_WT"),
+  file.path(output_root, "results", "gsea", "KO_vs_WT"),
+  
+  file.path(output_root, "figures"),
+  file.path(output_root, "figures", "qc"),
+  file.path(output_root, "figures", "volcano"),
+  file.path(output_root, "figures", "volcano", "het_vs_WT"),
+  file.path(output_root, "figures", "volcano", "KO_vs_WT"),
+  file.path(output_root, "figures", "gsea"),
+  file.path(output_root, "figures", "gsea", "het_vs_WT"),
+  file.path(output_root, "figures", "gsea", "KO_vs_WT")
 )
 
 walk(output_dirs, dir.create, showWarnings = FALSE, recursive = TRUE)
-#helper fxns for folder organization
+
+############################################################
+# Helper functions for output paths
+############################################################
+
 get_deseq_results_dir <- function(output_prefix) {
   if (output_prefix == "het_vs_WT") {
-    return(here("results", "deseq2", "het_vs_WT"))
+    return(file.path(output_root, "results", "deseq2", "het_vs_WT"))
   } else if (output_prefix == "KO_vs_WT") {
-    return(here("results", "deseq2", "KO_vs_WT"))
+    return(file.path(output_root, "results", "deseq2", "KO_vs_WT"))
   } else {
-    return(here("results", "deseq2"))
+    return(file.path(output_root, "results", "deseq2"))
   }
 }
 
 get_volcano_fig_dir <- function(output_prefix) {
   if (output_prefix == "het_vs_WT") {
-    return(here("figures", "volcano", "het_vs_WT"))
+    return(file.path(output_root, "figures", "volcano", "het_vs_WT"))
   } else if (output_prefix == "KO_vs_WT") {
-    return(here("figures", "volcano", "KO_vs_WT"))
+    return(file.path(output_root, "figures", "volcano", "KO_vs_WT"))
   } else {
-    return(here("figures", "volcano"))
+    return(file.path(output_root, "figures", "volcano"))
   }
 }
 
 get_gsea_results_dir <- function(output_prefix) {
   if (output_prefix == "het_vs_WT") {
-    return(here("results", "gsea", "het_vs_WT"))
+    return(file.path(output_root, "results", "gsea", "het_vs_WT"))
   } else if (output_prefix == "KO_vs_WT") {
-    return(here("results", "gsea", "KO_vs_WT"))
+    return(file.path(output_root, "results", "gsea", "KO_vs_WT"))
   } else {
-    return(here("results", "gsea"))
+    return(file.path(output_root, "results", "gsea"))
   }
 }
 
 get_gsea_fig_dir <- function(output_prefix) {
   if (output_prefix == "het_vs_WT") {
-    return(here("figures", "gsea", "het_vs_WT"))
+    return(file.path(output_root, "figures", "gsea", "het_vs_WT"))
   } else if (output_prefix == "KO_vs_WT") {
-    return(here("figures", "gsea", "KO_vs_WT"))
+    return(file.path(output_root, "figures", "gsea", "KO_vs_WT"))
   } else {
-    return(here("figures", "gsea"))
+    return(file.path(output_root, "figures", "gsea"))
   }
 }
 
@@ -126,7 +143,7 @@ get_gsea_fig_dir <- function(output_prefix) {
 ############################################################
 
 counts_raw <- read.csv(
-  here("Data/MouseKOCounts.csv"),
+  here("Data", "MouseKOCounts.csv"),
   stringsAsFactors = FALSE,
   check.names = FALSE
 )
@@ -214,7 +231,7 @@ norm_counts_qc <- counts(dds_qc, normalized = TRUE)
 write.csv(
   as.data.frame(norm_counts_qc) %>%
     rownames_to_column("ensembl_gene_id"),
-  here("results", "deseq2", "normalized_counts_QC_all_groups.csv"),
+  file.path(output_root, "results", "deseq2", "normalized_counts_QC_all_groups.csv"),
   row.names = FALSE
 )
 
@@ -253,7 +270,7 @@ p_pca <- ggplot(pca_data, aes(PC1, PC2, color = genotype, label = clean_name)) +
   theme_bw()
 
 ggsave(
-  here("figures", "qc", "PCA_vst_genotype.png"),
+  file.path(output_root, "figures", "qc", "PCA_vst_genotype.png"),
   p_pca,
   width = 7,
   height = 5,
@@ -292,7 +309,7 @@ group_gaps <- group_gaps[-length(group_gaps)]
 ############################################################
 
 png(
-  here("figures", "qc", "sample_distance_heatmap_grouped.png"),
+  file.path(output_root, "figures", "qc", "sample_distance_heatmap_grouped.png"),
   width = 1800,
   height = 1600,
   res = 250
@@ -317,7 +334,7 @@ dev.off()
 ############################################################
 
 png(
-  here("figures", "qc", "sample_distance_heatmap_clustered.png"),
+  file.path(output_root, "figures", "qc", "sample_distance_heatmap_clustered.png"),
   width = 1800,
   height = 1600,
   res = 250
@@ -1184,50 +1201,6 @@ for (contrast_name in names(gsea_objects)) {
 ############################################################
 # 20D. Running enrichment plots for clusterProfiler GSEA
 ############################################################
-
-save_top_gseaplot <- function(gsea_result, output_prefix, database_name, title_prefix) {
-  
-  gsea_df <- as.data.frame(gsea_result) %>%
-    filter(
-      !is.na(ID),
-      !is.na(p.adjust),
-      is.finite(p.adjust)
-    )
-  
-  if (nrow(gsea_df) == 0) {
-    message("No valid GSEA results to plot for: ", output_prefix, " ", database_name)
-    return(NULL)
-  }
-  
-  top_id <- gsea_df %>%
-    arrange(p.adjust) %>%
-    slice_head(n = 1) %>%
-    pull(ID)
-  
-  p <- enrichplot::gseaplot2(
-    gsea_result,
-    geneSetID = top_id,
-    title = paste0(title_prefix, ": ", top_id)
-  )
-  
-  ggsave(
-    file.path(
-      get_gsea_fig_dir(output_prefix),
-      paste0(output_prefix, "_", database_name, "_top_gseaplot.png")
-    ),
-    p,
-    width = 8,
-    height = 6,
-    dpi = 300
-  )
-  
-  return(p)
-}
-
-
-############################################################
-# 20D. Running enrichment plots for clusterProfiler GSEA
-############################################################
 # These plots show the running enrichment score for the top pathway.
 #
 # The top pathway is selected by smallest adjusted p-value.
@@ -1307,5 +1280,5 @@ for (contrast_name in names(gsea_objects)) {
 
 writeLines(
   capture.output(sessionInfo()),
-  here("results", "sessionInfo.txt")
+  file.path(output_root, "results", "sessionInfo.txt")
 )

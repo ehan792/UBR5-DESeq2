@@ -1,0 +1,2 @@
+"contrast","treatment_group","control_group","samples_used","number_of_samples_used","min_count","min_samples","genes_before_filtering","genes_after_filtering","genes_removed_by_filtering"
+"mouse_KD_vs_Control","KD","Control","sample.shrubr5_3_jw;sample.shrubr5_2_jw;sample.shrubr5_1_jw;sample.jw23.3_3;sample.jw23.3_2;sample.jw23.3_1",6,10,3,40481,15478,25003

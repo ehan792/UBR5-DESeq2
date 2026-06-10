@@ -1,0 +1,2 @@
+"contrast","comparison","min_count_filter","min_samples_filter","genes_tested_after_filtering","significant_padj","up_padj","down_padj","up_padj_lfc1","down_padj_lfc1"
+"human_KD_vs_Control","KD vs Control",10,3,23154,19985,9089,10896,7136,8839

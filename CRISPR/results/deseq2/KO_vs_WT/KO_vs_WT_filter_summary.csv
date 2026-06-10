@@ -1,0 +1,2 @@
+"contrast","group_a","group_b","samples_used","number_of_samples_used","min_count","min_samples","genes_before_filtering","genes_after_filtering","genes_removed_by_filtering"
+"KO_vs_WT","KO","WT","sample.WT_1;sample.WT_2;sample.WT_3;sample.neg.neg_1;sample.neg.neg_2;sample.neg.neg_3",6,10,3,78396,16919,61477
