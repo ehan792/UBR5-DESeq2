@@ -243,7 +243,7 @@ vsd <- vst(dds_qc, blind = FALSE)
 pca_data <- plotPCA(vsd, intgroup = "genotype", returnData = TRUE)
 pca_data$clean_name <- clean_sample_names[pca_data$name]
 
-percent_var <- round(100 * attr(pca_data, "percentVar"))
+percent_var <- round(100 * attr(pca_data, "percentVar"), 2)
 
 p_pca <- ggplot(pca_data, aes(PC1, PC2, color = genotype, label = clean_name)) +
   geom_point(size = 4) +
@@ -335,8 +335,46 @@ pheatmap(
 
 dev.off()
 
+
 ############################################################
-# 10. Contrast-specific DESeq2 analysis
+# 10. Contrast-specific DESeq2 analysis function
+############################################################
+# This function runs a full DESeq2 workflow for ONE comparison at a time.
+#
+# Why this matters:
+#   Instead of filtering genes globally across all 9 samples,
+#   this function first subsets to only the two genotypes being compared.
+#
+# Example:
+#   het_vs_WT uses only WT + het samples.
+#   KO_vs_WT uses only WT + KO samples.
+#
+# Important parameters:
+#   dds_all:
+#     The unfiltered DESeq2 object containing all samples.
+#
+#   group_a:
+#     The numerator group in the contrast.
+#     For c("genotype", "KO", "WT"), group_a = "KO".
+#     Positive log2FC means higher in group_a.
+#
+#   group_b:
+#     The denominator / reference group.
+#     For c("genotype", "KO", "WT"), group_b = "WT".
+#
+#   output_prefix:
+#     Used for output folder routing and file names.
+#     Examples: "het_vs_WT", "KO_vs_WT".
+#
+#   min_count:
+#     Minimum raw count required for a sample to count as "expressed".
+#     Here, min_count = 10.
+#
+#   min_samples:
+#     Number of samples in the comparison that must pass min_count.
+#     Here, min_samples = 3.
+#     Since each contrast has 6 samples, this means:
+#       keep genes with >=10 counts in at least 3 of the 6 contrast-specific samples.
 ############################################################
 
 run_deseq_for_contrast <- function(
@@ -349,22 +387,42 @@ run_deseq_for_contrast <- function(
     min_samples = 3
 ) {
   
-  # Keep only the two groups being compared
-  samples_to_keep <- rownames(colData(dds_all))[dds_all$genotype %in% c(group_a, group_b)]
+  ############################################################
+  # 10A. Subset to only the samples in this comparison
+  ############################################################
+  
+  samples_to_keep <- rownames(colData(dds_all))[
+    dds_all$genotype %in% c(group_a, group_b)
+  ]
   
   dds_contrast <- dds_all[, samples_to_keep]
   
-  # Drop unused factor levels and set reference level
+  # Drop the unused genotype level.
+  # Example: in KO_vs_WT, the "het" level is removed.
   dds_contrast$genotype <- droplevels(dds_contrast$genotype)
+  
+  # Set the reference group.
+  # This ensures the coefficient is group_a vs group_b.
   dds_contrast$genotype <- relevel(dds_contrast$genotype, ref = group_b)
   
-  # Filter genes using only the 6 samples in this comparison
+  ############################################################
+  # 10B. Contrast-specific low-count filtering
+  ############################################################
+  # This is the key change from your old global filter.
+  # Filtering is applied only after subsetting to the two groups being compared.
+  #
+  # For each gene:
+  #   keep if raw count >= min_count in at least min_samples samples.
+  #
+  # With min_count = 10 and min_samples = 3:
+  #   keep genes with >=10 counts in at least 3 of the 6 samples.
+  ############################################################
+  
   keep <- rowSums(counts(dds_contrast) >= min_count) >= min_samples
   dds_contrast <- dds_contrast[keep, ]
   
   message(output_prefix, ": kept ", sum(keep), " genes after filtering.")
   
-  #exports genes left post-filter per comparison
   filter_summary <- tibble(
     contrast = output_prefix,
     group_a = group_a,
@@ -380,30 +438,40 @@ run_deseq_for_contrast <- function(
   
   write.csv(
     filter_summary,
-    here(
+    file.path(
       get_deseq_results_dir(output_prefix),
       paste0(output_prefix, "_filter_summary.csv")
     ),
     row.names = FALSE
   )
   
-  # Run DESeq2 only on this contrast-specific object
+  ############################################################
+  # 10C. Run DESeq2 for this contrast-specific dataset
+  ############################################################
+  
   dds_contrast <- DESeq(dds_contrast)
   
-  # Save normalized counts for this contrast
   norm_counts <- counts(dds_contrast, normalized = TRUE)
   
   write.csv(
     as.data.frame(norm_counts) %>%
       rownames_to_column("ensembl_gene_id"),
-    here(
+    file.path(
       get_deseq_results_dir(output_prefix),
       paste0(output_prefix, "_normalized_counts.csv")
     ),
     row.names = FALSE
   )
   
-  # Extract normal DESeq2 results
+  ############################################################
+  # 10D. Extract standard DESeq2 results
+  ############################################################
+  # Positive log2FoldChange means higher in group_a than group_b.
+  # Example:
+  #   group_a = "KO", group_b = "WT"
+  #   positive log2FC = higher in KO.
+  ############################################################
+  
   res <- results(
     dds_contrast,
     contrast = c("genotype", group_a, group_b),
@@ -417,18 +485,36 @@ run_deseq_for_contrast <- function(
   
   write.csv(
     res_df,
-    here(
+    file.path(
       get_deseq_results_dir(output_prefix),
       paste0(output_prefix, "_DESeq2_results.csv")
     ),
     row.names = FALSE
   )
   
-  # Shrunk LFC
+  ############################################################
+  # 10E. Shrink log2FC for visualization
+  ############################################################
+  # Shrunk LFCs are preferred for volcano plots because they reduce
+  # unstable large fold-changes from low-count genes.
+  #
+  # Important:
+  #   GSEA should still use the unshrunk Wald statistic from res_df$stat.
+  #   Volcano plots can use the shrunk log2FoldChange.
+  ############################################################
+  
   message("Available coefficients for ", output_prefix, ":")
   print(resultsNames(dds_contrast))
   
   coef_name <- paste0("genotype_", group_a, "_vs_", group_b)
+  
+  if (!coef_name %in% resultsNames(dds_contrast)) {
+    stop(
+      "Coefficient not found: ", coef_name,
+      "\nAvailable coefficients are: ",
+      paste(resultsNames(dds_contrast), collapse = ", ")
+    )
+  }
   
   res_shrunk <- lfcShrink(
     dds_contrast,
@@ -443,17 +529,20 @@ run_deseq_for_contrast <- function(
   
   write.csv(
     res_shrunk_df,
-    here(
+    file.path(
       get_deseq_results_dir(output_prefix),
       paste0(output_prefix, "_DESeq2_shrunkLFC.csv")
     ),
     row.names = FALSE
   )
   
-  # Summary table
+  ############################################################
+  # 10F. Export compact DE summary
+  ############################################################
+  
   summary_df <- tibble(
     contrast = output_prefix,
-    comparison_samples = paste(c(group_a, group_b), collapse = "_vs_"),
+    comparison = paste(group_a, "vs", group_b),
     min_count_filter = min_count,
     min_samples_filter = min_samples,
     genes_tested_after_filtering = nrow(res_df),
@@ -466,7 +555,7 @@ run_deseq_for_contrast <- function(
   
   write.csv(
     summary_df,
-    here(
+    file.path(
       get_deseq_results_dir(output_prefix),
       paste0(output_prefix, "_DE_summary.csv")
     ),
@@ -477,96 +566,129 @@ run_deseq_for_contrast <- function(
     dds = dds_contrast,
     res = res_df,
     shrunk = res_shrunk_df,
-    summary = summary_df
+    summary = summary_df,
+    filter_summary = filter_summary
   ))
 }
-
 
 ############################################################
 # 11. Run contrast-specific DESeq2 analyses
 ############################################################
+# Each comparison gets its own DESeq2 object and its own filtering.
+# This avoids using the het samples when filtering KO_vs_WT,
+# and avoids using the KO samples when filtering het_vs_WT.
+############################################################
 
-het_vs_WT_analysis <- run_deseq_for_contrast(
-  dds_all = dds_all,
-  group_a = "het",
-  group_b = "WT",
-  output_prefix = "het_vs_WT",
-  gene_annot = gene_annot,
-  min_count = 10,
-  min_samples = 3
+contrast_specs <- list(
+  het_vs_WT = list(
+    group_a = "het",
+    group_b = "WT",
+    title = "+/- vs WT"
+  ),
+  KO_vs_WT = list(
+    group_a = "KO",
+    group_b = "WT",
+    title = "-/- vs WT"
+  )
 )
 
-KO_vs_WT_analysis <- run_deseq_for_contrast(
-  dds_all = dds_all,
-  group_a = "KO",
-  group_b = "WT",
-  output_prefix = "KO_vs_WT",
-  gene_annot = gene_annot,
-  min_count = 10,
-  min_samples = 3
-)
+contrast_results <- list()
 
-# Preserve old object names so the rest of your script still works
-res_het_vs_wt <- het_vs_WT_analysis$res
-res_KO_vs_wt <- KO_vs_WT_analysis$res
+for (contrast_name in names(contrast_specs)) {
+  
+  spec <- contrast_specs[[contrast_name]]
+  
+  contrast_results[[contrast_name]] <- run_deseq_for_contrast(
+    dds_all = dds_all,
+    group_a = spec$group_a,
+    group_b = spec$group_b,
+    output_prefix = contrast_name,
+    gene_annot = gene_annot,
+    min_count = 10,
+    min_samples = 3
+  )
+}
 
-res_het_shrunk_df <- het_vs_WT_analysis$shrunk
-res_KO_shrunk_df <- KO_vs_WT_analysis$shrunk
+# Preserve familiar object names for the rest of the script.
+res_het_vs_wt <- contrast_results[["het_vs_WT"]]$res
+res_KO_vs_wt <- contrast_results[["KO_vs_WT"]]$res
 
-de_summary_het <- het_vs_WT_analysis$summary
-de_summary_KO <- KO_vs_WT_analysis$summary
+res_het_shrunk_df <- contrast_results[["het_vs_WT"]]$shrunk
+res_KO_shrunk_df <- contrast_results[["KO_vs_WT"]]$shrunk
 
+de_summary_het <- contrast_results[["het_vs_WT"]]$summary
+de_summary_KO <- contrast_results[["KO_vs_WT"]]$summary
 
+############################################################
+# 12. Volcano plot function
+############################################################
+# This removes duplicate volcano code and prevents copy/paste errors.
+#
+# Important parameters:
+#   res_shrunk_df:
+#     DESeq2 result table using apeglm-shrunk log2FC.
+#
+#   output_prefix:
+#     Controls the output folder and filename.
+#
+#   title:
+#     Human-readable title shown on the plot.
+#
+#   pCutoff:
+#     Adjusted p-value threshold used by EnhancedVolcano.
+#
+#   FCcutoff:
+#     Absolute log2FC cutoff used by EnhancedVolcano.
+############################################################
 
+plot_volcano <- function(
+    res_shrunk_df,
+    output_prefix,
+    title,
+    pCutoff = 0.05,
+    FCcutoff = 1
+) {
+  
+  png(
+    file.path(
+      get_volcano_fig_dir(output_prefix),
+      paste0("volcano_", output_prefix, ".png")
+    ),
+    width = 2000,
+    height = 1800,
+    res = 250
+  )
+  
+  print(
+    EnhancedVolcano(
+      res_shrunk_df,
+      lab = res_shrunk_df$external_gene_name,
+      x = "log2FoldChange",
+      y = "padj",
+      title = title,
+      subtitle = "DESeq2 with apeglm-shrunk log2FC",
+      pCutoff = pCutoff,
+      FCcutoff = FCcutoff
+    )
+  )
+  
+  dev.off()
+}
 
 ############################################################
 # 13. Volcano plots
 ############################################################
 
-png(
-  here(get_volcano_fig_dir("het_vs_WT"), "volcano_het_vs_WT.png"),
-  width = 2000,
-  height = 1800,
-  res = 250
-)
-
-print(
-  EnhancedVolcano(
-    res_het_shrunk_df,
-    lab = res_het_shrunk_df$external_gene_name,
-    x = "log2FoldChange",
-    y = "padj",
-    title = "+/- vs WT",
-    subtitle = "DESeq2 with apeglm-shrunk log2FC",
+for (contrast_name in names(contrast_specs)) {
+  
+  plot_volcano(
+    res_shrunk_df = contrast_results[[contrast_name]]$shrunk,
+    output_prefix = contrast_name,
+    title = contrast_specs[[contrast_name]]$title,
     pCutoff = 0.05,
     FCcutoff = 1
   )
-)
-
-dev.off()
-
-png(
-  here(get_volcano_fig_dir("KO_vs_WT"), "volcano_KO_vs_WT.png"),
-  width = 2000,
-  height = 1800,
-  res = 250
-)
-
-print(
-  EnhancedVolcano(
-    res_het_shrunk_df,
-    lab = res_het_shrunk_df$external_gene_name,
-    x = "log2FoldChange",
-    y = "padj",
-    title = "+/- vs WT",
-    subtitle = "DESeq2 with apeglm-shrunk log2FC",
-    pCutoff = 0.05,
-    FCcutoff = 1
-  )
-)
-
-dev.off()
-
+}
 
 
 ############################################################
@@ -646,7 +768,7 @@ run_hallmark_gsea <- function(gene_list, output_prefix) {
   
   write.csv(
     fgsea_export,
-    here(
+    file.path(
       get_gsea_results_dir(output_prefix),
       paste0(output_prefix, "_GSEA_Hallmark.csv")
     ),
@@ -683,7 +805,7 @@ run_kegg_gsea <- function(gene_list, output_prefix) {
   
   write.csv(
     kegg_df,
-    here(
+    file.path(
       get_gsea_results_dir(output_prefix),
       paste0(output_prefix, "_GSEA_KEGG.csv")
     ),
@@ -716,7 +838,7 @@ run_reactome_gsea <- function(gene_list, output_prefix) {
   
   write.csv(
     reactome_df,
-    here(
+    file.path(
       get_gsea_results_dir(output_prefix),
       paste0(output_prefix, "_GSEA_Reactome.csv")
     ),
@@ -762,7 +884,7 @@ run_go_bp_gsea <- function(gene_list, output_prefix) {
   
   write.csv(
     go_df,
-    here(
+    file.path(
       get_gsea_results_dir(output_prefix),
       paste0(output_prefix, "_GSEA_GO_BP.csv")
     ),
@@ -803,7 +925,7 @@ plot_fgsea_dotplot <- function(fgsea_df, output_prefix, title, top_n = 20) {
     )
   
   ggsave(
-    here(
+    file.path(
       get_gsea_fig_dir(output_prefix),
       paste0(output_prefix, "_Hallmark_dotplot.png")
     ),
@@ -857,7 +979,7 @@ plot_top_fgsea_enrichment <- function(gsea_obj, gene_list, output_prefix) {
       labs(title = paste0(output_prefix, ": ", top_up))
     
     ggsave(
-      here(
+      file.path(
         get_gsea_fig_dir(output_prefix),
         paste0(output_prefix, "_Hallmark_top_up_enrichment.png")
       ),
@@ -876,7 +998,7 @@ plot_top_fgsea_enrichment <- function(gsea_obj, gene_list, output_prefix) {
       labs(title = paste0(output_prefix, ": ", top_down))
     
     ggsave(
-      here(
+      file.path(
         get_gsea_fig_dir(output_prefix),
         paste0(output_prefix, "_Hallmark_top_down_enrichment.png")
       ),
@@ -951,7 +1073,7 @@ save_gsea_dotplot <- function(
     )
   
   ggsave(
-    here(
+    file.path(
       get_gsea_fig_dir(output_prefix),
       paste0(output_prefix, "_", database_name, "_dotplot.png")
     ),
@@ -964,77 +1086,100 @@ save_gsea_dotplot <- function(
   return(p)
 }
 
-#GSEA specific display settings
-#KEGG
-p_kegg_het <- save_gsea_dotplot(
-  gsea_kegg_het,
-  "het_vs_WT",
-  "KEGG",
-  "KEGG GSEA: +/- vs WT",
-  show_n = 10,
-  label_width = 40,
-  fig_width = 11,
-  fig_height = 7
+############################################################
+# 20C. Save KEGG, Reactome, and GO dotplots
+############################################################
+# This section uses one general dotplot function but applies
+# different formatting settings for each gene-set database.
+#
+# Why settings differ:
+#   KEGG terms are usually shorter.
+#   Reactome terms can be moderately long.
+#   GO Biological Process terms are often very long and redundant.
+#
+# Important parameters:
+#   show_n:
+#     Number of top categories shown.
+#
+#   label_width:
+#     Controls line-wrapping of long pathway names.
+#
+#   fig_width / fig_height:
+#     Controls saved PNG dimensions.
+#
+#   text_size:
+#     Controls y-axis pathway label size.
+############################################################
+
+gsea_plot_settings <- list(
+  KEGG = list(
+    show_n = 10,
+    label_width = 40,
+    fig_width = 11,
+    fig_height = 7,
+    text_size = 8
+  ),
+  Reactome = list(
+    show_n = 10,
+    label_width = 45,
+    fig_width = 13,
+    fig_height = 7,
+    text_size = 8
+  ),
+  GO_BP = list(
+    show_n = 8,
+    label_width = 35,
+    fig_width = 14,
+    fig_height = 8,
+    text_size = 7
+  )
 )
 
-p_kegg_KO <- save_gsea_dotplot(
-  gsea_kegg_KO,
-  "KO_vs_WT",
-  "KEGG",
-  "KEGG GSEA: -/- vs WT",
-  show_n = 10,
-  label_width = 40,
-  fig_width = 11,
-  fig_height = 7
-)
-#REACTOME
-p_reactome_het <- save_gsea_dotplot(
-  gsea_reactome_het,
-  "het_vs_WT",
-  "Reactome",
-  "Reactome GSEA: +/- vs WT",
-  show_n = 10,
-  label_width = 45,
-  fig_width = 13,
-  fig_height = 7
+gsea_objects <- list(
+  het_vs_WT = list(
+    KEGG = gsea_kegg_het,
+    Reactome = gsea_reactome_het,
+    GO_BP = gsea_go_het
+  ),
+  KO_vs_WT = list(
+    KEGG = gsea_kegg_KO,
+    Reactome = gsea_reactome_KO,
+    GO_BP = gsea_go_KO
+  )
 )
 
-p_reactome_KO <- save_gsea_dotplot(
-  gsea_reactome_KO,
-  "KO_vs_WT",
-  "Reactome",
-  "Reactome GSEA: -/- vs WT",
-  show_n = 10,
-  label_width = 45,
-  fig_width = 13,
-  fig_height = 7
+gsea_titles <- list(
+  het_vs_WT = list(
+    KEGG = "KEGG GSEA: +/- vs WT",
+    Reactome = "Reactome GSEA: +/- vs WT",
+    GO_BP = "GO Biological Process GSEA: +/- vs WT"
+  ),
+  KO_vs_WT = list(
+    KEGG = "KEGG GSEA: -/- vs WT",
+    Reactome = "Reactome GSEA: -/- vs WT",
+    GO_BP = "GO Biological Process GSEA: -/- vs WT"
+  )
 )
 
-#GO
-p_go_het <- save_gsea_dotplot(
-  gsea_go_het,
-  "het_vs_WT",
-  "GO_BP",
-  "GO Biological Process GSEA: +/- vs WT",
-  show_n = 8,
-  label_width = 35,
-  fig_width = 14,
-  fig_height = 8,
-  text_size = 7
-)
-
-p_go_KO <- save_gsea_dotplot(
-  gsea_go_KO,
-  "KO_vs_WT",
-  "GO_BP",
-  "GO Biological Process GSEA: -/- vs WT",
-  show_n = 8,
-  label_width = 35,
-  fig_width = 14,
-  fig_height = 8,
-  text_size = 7
-)
-
+for (contrast_name in names(gsea_objects)) {
+  
+  for (database_name in names(gsea_objects[[contrast_name]])) {
+    
+    settings <- gsea_plot_settings[[database_name]]
+    
+    save_gsea_dotplot(
+      gsea_result = gsea_objects[[contrast_name]][[database_name]],
+      output_prefix = contrast_name,
+      database_name = database_name,
+      title = gsea_titles[[contrast_name]][[database_name]],
+      show_n = settings$show_n,
+      label_width = settings$label_width,
+      fig_width = settings$fig_width,
+      fig_height = settings$fig_height,
+      text_size = settings$text_size
+    )
+  }
+}
 
 ############################################################
 # 20D. Running enrichment plots for clusterProfiler GSEA
@@ -1066,7 +1211,7 @@ save_top_gseaplot <- function(gsea_result, output_prefix, database_name, title_p
   )
   
   ggsave(
-    here(
+    file.path(
       get_gsea_fig_dir(output_prefix),
       paste0(output_prefix, "_", database_name, "_top_gseaplot.png")
     ),
@@ -1080,47 +1225,81 @@ save_top_gseaplot <- function(gsea_result, output_prefix, database_name, title_p
 }
 
 
-save_top_gseaplot(
-  gsea_kegg_het,
-  "het_vs_WT",
-  "KEGG",
-  "Top KEGG GSEA +/- vs WT"
+############################################################
+# 20D. Running enrichment plots for clusterProfiler GSEA
+############################################################
+# These plots show the running enrichment score for the top pathway.
+#
+# The top pathway is selected by smallest adjusted p-value.
+# Invalid rows where ID or p.adjust is NA are removed before choosing
+# the top pathway. This avoids errors when GO/KEGG/Reactome return
+# partially invalid GSEA rows.
+############################################################
+
+save_top_gseaplot <- function(gsea_result, output_prefix, database_name, title_prefix) {
+  
+  gsea_df <- as.data.frame(gsea_result) %>%
+    filter(
+      !is.na(ID),
+      !is.na(p.adjust),
+      is.finite(p.adjust)
+    )
+  
+  if (nrow(gsea_df) == 0) {
+    message("No valid GSEA results to plot for: ", output_prefix, " ", database_name)
+    return(NULL)
+  }
+  
+  top_id <- gsea_df %>%
+    arrange(p.adjust) %>%
+    slice_head(n = 1) %>%
+    pull(ID)
+  
+  p <- enrichplot::gseaplot2(
+    gsea_result,
+    geneSetID = top_id,
+    title = paste0(title_prefix, ": ", top_id)
+  )
+  
+  ggsave(
+    file.path(
+      get_gsea_fig_dir(output_prefix),
+      paste0(output_prefix, "_", database_name, "_top_gseaplot.png")
+    ),
+    p,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+  
+  return(p)
+}
+
+top_gseaplot_titles <- list(
+  het_vs_WT = list(
+    KEGG = "Top KEGG GSEA +/- vs WT",
+    Reactome = "Top Reactome GSEA +/- vs WT",
+    GO_BP = "Top GO BP GSEA +/- vs WT"
+  ),
+  KO_vs_WT = list(
+    KEGG = "Top KEGG GSEA -/- vs WT",
+    Reactome = "Top Reactome GSEA -/- vs WT",
+    GO_BP = "Top GO BP GSEA -/- vs WT"
+  )
 )
 
-save_top_gseaplot(
-  gsea_kegg_KO,
-  "KO_vs_WT",
-  "KEGG",
-  "Top KEGG GSEA -/- vs WT"
-)
-
-save_top_gseaplot(
-  gsea_reactome_het,
-  "het_vs_WT",
-  "Reactome",
-  "Top Reactome GSEA +/- vs WT"
-)
-
-save_top_gseaplot(
-  gsea_reactome_KO,
-  "KO_vs_WT",
-  "Reactome",
-  "Top Reactome GSEA -/- vs WT"
-)
-
-save_top_gseaplot(
-  gsea_go_het,
-  "het_vs_WT",
-  "GO_BP",
-  "Top GO BP GSEA +/- vs WT"
-)
-
-save_top_gseaplot(
-  gsea_go_KO,
-  "KO_vs_WT",
-  "GO_BP",
-  "Top GO BP GSEA -/- vs WT"
-)
+for (contrast_name in names(gsea_objects)) {
+  
+  for (database_name in names(gsea_objects[[contrast_name]])) {
+    
+    save_top_gseaplot(
+      gsea_result = gsea_objects[[contrast_name]][[database_name]],
+      output_prefix = contrast_name,
+      database_name = database_name,
+      title_prefix = top_gseaplot_titles[[contrast_name]][[database_name]]
+    )
+  }
+}
 
 ############################################################
 # Save session info for reproducibility
