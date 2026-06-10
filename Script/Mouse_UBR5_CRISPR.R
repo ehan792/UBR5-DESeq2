@@ -1,4 +1,5 @@
 #mouse CRISPR KO mouse
+#test
 
 #############################################
 #Package download
@@ -186,36 +187,39 @@ stopifnot(!any(is.na(sample_info$genotype)))
 
 
 
-# 5. Create DESeq2 object
-dds <- DESeqDataSetFromMatrix(
+############################################################
+# 5. Create full DESeq2 object for QC only
+############################################################
+
+dds_all <- DESeqDataSetFromMatrix(
   countData = count_matrix,
   colData = sample_info,
-  design = ~ genotype #design variable "formula"
+  design = ~ genotype
 )
 
 ############################################################
-# 6. Filter low-count genes
+# 6. QC-filtered object for PCA / heatmaps only
 ############################################################
-# Keep genes with at least 10 counts in at least 3 samples.
-keep <- rowSums(counts(dds) >= 10) >= 3
-dds <- dds[keep, ]
+# This object is for global QC visualization.
+# Differential expression contrasts will be filtered separately below.
 
-dds
+keep_qc <- rowSums(counts(dds_all) >= 10) >= 3
+dds_qc <- dds_all[keep_qc, ]
 
-############################################################
-# 7. Run DESeq2
-############################################################
-dds <- DESeq(dds)
+dds_qc <- DESeq(dds_qc)
 
-# Save normalized counts for visualization
-norm_counts <- counts(dds, normalized = TRUE)
+# Save globally normalized counts for QC/reference
+norm_counts_qc <- counts(dds_qc, normalized = TRUE)
 
 write.csv(
-  as.data.frame(norm_counts) %>%
+  as.data.frame(norm_counts_qc) %>%
     rownames_to_column("ensembl_gene_id"),
-  here("results", "deseq2", "normalized_counts.csv"),
+  here("results", "deseq2", "normalized_counts_QC_all_groups.csv"),
   row.names = FALSE
 )
+
+
+
 
 ############################################################
 # 8. QC: Initial visualizations (PCA, heatmap)
@@ -234,7 +238,7 @@ clean_sample_names <- c(
 
 
 # PCA using VST-transformed counts
-vsd <- vst(dds, blind = FALSE)
+vsd <- vst(dds_qc, blind = FALSE)
 
 pca_data <- plotPCA(vsd, intgroup = "genotype", returnData = TRUE)
 pca_data$clean_name <- clean_sample_names[pca_data$name]
@@ -256,61 +260,8 @@ ggsave(
   dpi = 300
 )
 
-
-
-# 9. Sample distance heatmap
-sample_dists <- dist(t(assay(vsd)))
-sample_dist_mat <- as.matrix(sample_dists)
-
-rownames(sample_dist_mat) <- colnames(vsd)
-colnames(sample_dist_mat) <- colnames(vsd)
-
-sample_order <- sample_info %>%
-  rownames_to_column("sample") %>%
-  arrange(genotype) %>%
-  pull(sample)
-
-sample_dist_mat_ordered <- sample_dist_mat[sample_order, sample_order]
-
-
-rownames(sample_dist_mat_ordered) <- clean_sample_names[rownames(sample_dist_mat_ordered)]
-colnames(sample_dist_mat_ordered) <- clean_sample_names[colnames(sample_dist_mat_ordered)]
-
-png(
-  here("figures", "qc", "sample_distance_heatmap.png"),
-  width = 1800,
-  height = 1600,
-  res = 250
-)
-
-pheatmap(
-  sample_dist_mat_ordered,
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  main = "Sample distances using VST counts"
-)
-
-dev.off()
-
-#QC heatmap, clustering
-png(
-  here("figures", "qc", "sample_distance_heatmap_clustered.png"),
-  width = 1800,
-  height = 1600,
-  res = 250
-)
-
-pheatmap(
-  sample_dist_mat_ordered,
-  cluster_rows = TRUE,
-  cluster_cols = TRUE,
-  main = "Sample distances using VST counts, clustered"
-)
-
-dev.off()
-
 ############################################################
-# 9A. Sample distance heatmap, grouped by genotype
+# 9. Sample distance heatmaps
 ############################################################
 
 sample_dists <- dist(t(assay(vsd)))
@@ -319,15 +270,26 @@ sample_dist_mat <- as.matrix(sample_dists)
 rownames(sample_dist_mat) <- colnames(vsd)
 colnames(sample_dist_mat) <- colnames(vsd)
 
-sample_order <- sample_info %>%
+# Order samples by genotype so the grouped heatmap is WT, het, KO
+sample_order_df <- sample_info %>%
   rownames_to_column("sample") %>%
-  arrange(genotype, sample) %>%
-  pull(sample)
+  arrange(genotype, sample)
+
+sample_order <- sample_order_df$sample
 
 sample_dist_mat_ordered <- sample_dist_mat[sample_order, sample_order]
 
 rownames(sample_dist_mat_ordered) <- clean_sample_names[rownames(sample_dist_mat_ordered)]
 colnames(sample_dist_mat_ordered) <- clean_sample_names[colnames(sample_dist_mat_ordered)]
+
+# Automatically calculate group gaps instead of hardcoding c(3, 6)
+group_sizes <- table(sample_order_df$genotype)
+group_gaps <- cumsum(as.integer(group_sizes))
+group_gaps <- group_gaps[-length(group_gaps)]
+
+############################################################
+# 9A. Grouped heatmap: preserves phenotype order
+############################################################
 
 png(
   here("figures", "qc", "sample_distance_heatmap_grouped.png"),
@@ -340,15 +302,18 @@ pheatmap(
   sample_dist_mat_ordered,
   cluster_rows = FALSE,
   cluster_cols = FALSE,
-  gaps_row = c(3, 6),
-  gaps_col = c(3, 6),
-  main = "Sample distances using VST counts, grouped by genotype"
+  gaps_row = group_gaps,
+  gaps_col = group_gaps,
+  main = "Sample distances using VST counts, grouped by genotype",
+  fontsize_row = 10,
+  fontsize_col = 10,
+  angle_col = 45
 )
 
 dev.off()
 
 ############################################################
-# 9B. Sample distance heatmap, clustered QC version
+# 9B. Clustered heatmap: lets samples cluster naturally
 ############################################################
 
 png(
@@ -362,15 +327,86 @@ pheatmap(
   sample_dist_mat_ordered,
   cluster_rows = TRUE,
   cluster_cols = TRUE,
-  main = "Sample distances using VST counts, clustered"
+  main = "Sample distances using VST counts, clustered",
+  fontsize_row = 10,
+  fontsize_col = 10,
+  angle_col = 45
 )
 
 dev.off()
-# 10. Export DESeq2 results
-export_deseq_result <- function(dds, contrast_vector, output_prefix) {
+
+############################################################
+# 10. Contrast-specific DESeq2 analysis
+############################################################
+
+run_deseq_for_contrast <- function(
+    dds_all,
+    group_a,
+    group_b,
+    output_prefix,
+    gene_annot,
+    min_count = 10,
+    min_samples = 3
+) {
+  
+  # Keep only the two groups being compared
+  samples_to_keep <- rownames(colData(dds_all))[dds_all$genotype %in% c(group_a, group_b)]
+  
+  dds_contrast <- dds_all[, samples_to_keep]
+  
+  # Drop unused factor levels and set reference level
+  dds_contrast$genotype <- droplevels(dds_contrast$genotype)
+  dds_contrast$genotype <- relevel(dds_contrast$genotype, ref = group_b)
+  
+  # Filter genes using only the 6 samples in this comparison
+  keep <- rowSums(counts(dds_contrast) >= min_count) >= min_samples
+  dds_contrast <- dds_contrast[keep, ]
+  
+  message(output_prefix, ": kept ", sum(keep), " genes after filtering.")
+  
+  #exports genes left post-filter per comparison
+  filter_summary <- tibble(
+    contrast = output_prefix,
+    group_a = group_a,
+    group_b = group_b,
+    samples_used = paste(samples_to_keep, collapse = ";"),
+    number_of_samples_used = length(samples_to_keep),
+    min_count = min_count,
+    min_samples = min_samples,
+    genes_before_filtering = length(keep),
+    genes_after_filtering = sum(keep),
+    genes_removed_by_filtering = length(keep) - sum(keep)
+  )
+  
+  write.csv(
+    filter_summary,
+    here(
+      get_deseq_results_dir(output_prefix),
+      paste0(output_prefix, "_filter_summary.csv")
+    ),
+    row.names = FALSE
+  )
+  
+  # Run DESeq2 only on this contrast-specific object
+  dds_contrast <- DESeq(dds_contrast)
+  
+  # Save normalized counts for this contrast
+  norm_counts <- counts(dds_contrast, normalized = TRUE)
+  
+  write.csv(
+    as.data.frame(norm_counts) %>%
+      rownames_to_column("ensembl_gene_id"),
+    here(
+      get_deseq_results_dir(output_prefix),
+      paste0(output_prefix, "_normalized_counts.csv")
+    ),
+    row.names = FALSE
+  )
+  
+  # Extract normal DESeq2 results
   res <- results(
-    dds,
-    contrast = contrast_vector,
+    dds_contrast,
+    contrast = c("genotype", group_a, group_b),
     alpha = 0.05
   )
   
@@ -388,87 +424,44 @@ export_deseq_result <- function(dds, contrast_vector, output_prefix) {
     row.names = FALSE
   )
   
-  # LFC shrinkage for more stable effect-size visualization
-  return(res_df)
-}
-
-resultsNames(dds)
-
-
-# 11. Comparison to WT
-res_het_vs_wt <- export_deseq_result(
-  dds = dds,
-  contrast_vector = c("genotype", "het", "WT"),
-  output_prefix = "het_vs_WT"
-)
-
-res_KO_vs_wt <- export_deseq_result(
-  dds = dds,
-  contrast_vector = c("genotype", "KO", "WT"),
-  output_prefix = "KO_vs_WT"
-)
-
-############################################################
-# 12. Shrunk log2FC tables for visualization
-############################################################
-
-# Check exact coefficient names:
-resultsNames(dds)
-
-# These names should usually be:
-# "Intercept"
-# "genotype_het_vs_WT"
-# "genotype_KO_vs_WT"
-
-res_het_shrunk <- lfcShrink(
-  dds,
-  coef = "genotype_het_vs_WT",
-  type = "apeglm"
-)
-
-res_KO_shrunk <- lfcShrink(
-  dds,
-  coef = "genotype_KO_vs_WT",
-  type = "apeglm"
-)
-
-res_het_shrunk_df <- as.data.frame(res_het_shrunk) %>%
-  rownames_to_column("ensembl_gene_id") %>%
-  left_join(gene_annot, by = "ensembl_gene_id") %>%
-  arrange(padj)
-
-res_KO_shrunk_df <- as.data.frame(res_KO_shrunk) %>%
-  rownames_to_column("ensembl_gene_id") %>%
-  left_join(gene_annot, by = "ensembl_gene_id") %>%
-  arrange(padj)
-
-write.csv(
-  res_het_shrunk_df,
-  here(
-    get_deseq_results_dir("het_vs_WT"),
-    "het_vs_WT_DESeq2_shrunkLFC.csv"
-  ),
-  row.names = FALSE
-)
-
-write.csv(
-  res_KO_shrunk_df,
-  here(
-    get_deseq_results_dir("KO_vs_WT"),
-    "KO_vs_WT_DESeq2_shrunkLFC.csv"
-  ),
-  row.names = FALSE
-)
-
-summarize_de <- function(res_df, output_prefix, alpha = 0.05, lfc_cutoff = 1) {
+  # Shrunk LFC
+  message("Available coefficients for ", output_prefix, ":")
+  print(resultsNames(dds_contrast))
   
+  coef_name <- paste0("genotype_", group_a, "_vs_", group_b)
+  
+  res_shrunk <- lfcShrink(
+    dds_contrast,
+    coef = coef_name,
+    type = "apeglm"
+  )
+  
+  res_shrunk_df <- as.data.frame(res_shrunk) %>%
+    rownames_to_column("ensembl_gene_id") %>%
+    left_join(gene_annot, by = "ensembl_gene_id") %>%
+    arrange(padj)
+  
+  write.csv(
+    res_shrunk_df,
+    here(
+      get_deseq_results_dir(output_prefix),
+      paste0(output_prefix, "_DESeq2_shrunkLFC.csv")
+    ),
+    row.names = FALSE
+  )
+  
+  # Summary table
   summary_df <- tibble(
     contrast = output_prefix,
-    significant_padj = sum(res_df$padj < alpha, na.rm = TRUE),
-    up_padj = sum(res_df$padj < alpha & res_df$log2FoldChange > 0, na.rm = TRUE),
-    down_padj = sum(res_df$padj < alpha & res_df$log2FoldChange < 0, na.rm = TRUE),
-    up_padj_lfc1 = sum(res_df$padj < alpha & res_df$log2FoldChange >= lfc_cutoff, na.rm = TRUE),
-    down_padj_lfc1 = sum(res_df$padj < alpha & res_df$log2FoldChange <= -lfc_cutoff, na.rm = TRUE)
+    comparison_samples = paste(c(group_a, group_b), collapse = "_vs_"),
+    min_count_filter = min_count,
+    min_samples_filter = min_samples,
+    genes_tested_after_filtering = nrow(res_df),
+    significant_padj = sum(res_df$padj < 0.05, na.rm = TRUE),
+    up_padj = sum(res_df$padj < 0.05 & res_df$log2FoldChange > 0, na.rm = TRUE),
+    down_padj = sum(res_df$padj < 0.05 & res_df$log2FoldChange < 0, na.rm = TRUE),
+    up_padj_lfc1 = sum(res_df$padj < 0.05 & res_df$log2FoldChange >= 1, na.rm = TRUE),
+    down_padj_lfc1 = sum(res_df$padj < 0.05 & res_df$log2FoldChange <= -1, na.rm = TRUE)
   )
   
   write.csv(
@@ -480,11 +473,51 @@ summarize_de <- function(res_df, output_prefix, alpha = 0.05, lfc_cutoff = 1) {
     row.names = FALSE
   )
   
-  return(summary_df)
+  return(list(
+    dds = dds_contrast,
+    res = res_df,
+    shrunk = res_shrunk_df,
+    summary = summary_df
+  ))
 }
 
-de_summary_het <- summarize_de(res_het_vs_wt, "het_vs_WT")
-de_summary_KO <- summarize_de(res_KO_vs_wt, "KO_vs_WT")
+
+############################################################
+# 11. Run contrast-specific DESeq2 analyses
+############################################################
+
+het_vs_WT_analysis <- run_deseq_for_contrast(
+  dds_all = dds_all,
+  group_a = "het",
+  group_b = "WT",
+  output_prefix = "het_vs_WT",
+  gene_annot = gene_annot,
+  min_count = 10,
+  min_samples = 3
+)
+
+KO_vs_WT_analysis <- run_deseq_for_contrast(
+  dds_all = dds_all,
+  group_a = "KO",
+  group_b = "WT",
+  output_prefix = "KO_vs_WT",
+  gene_annot = gene_annot,
+  min_count = 10,
+  min_samples = 3
+)
+
+# Preserve old object names so the rest of your script still works
+res_het_vs_wt <- het_vs_WT_analysis$res
+res_KO_vs_wt <- KO_vs_WT_analysis$res
+
+res_het_shrunk_df <- het_vs_WT_analysis$shrunk
+res_KO_shrunk_df <- KO_vs_WT_analysis$shrunk
+
+de_summary_het <- het_vs_WT_analysis$summary
+de_summary_KO <- KO_vs_WT_analysis$summary
+
+
+
 
 ############################################################
 # 13. Volcano plots
@@ -497,15 +530,17 @@ png(
   res = 250
 )
 
-EnhancedVolcano(
-  res_het_shrunk_df,
-  lab = res_het_shrunk_df$external_gene_name,
-  x = "log2FoldChange",
-  y = "padj",
-  title = "+/- vs WT",
-  subtitle = "DESeq2 with apeglm-shrunk log2FC",
-  pCutoff = 0.05,
-  FCcutoff = 1
+print(
+  EnhancedVolcano(
+    res_het_shrunk_df,
+    lab = res_het_shrunk_df$external_gene_name,
+    x = "log2FoldChange",
+    y = "padj",
+    title = "+/- vs WT",
+    subtitle = "DESeq2 with apeglm-shrunk log2FC",
+    pCutoff = 0.05,
+    FCcutoff = 1
+  )
 )
 
 dev.off()
@@ -517,15 +552,17 @@ png(
   res = 250
 )
 
-EnhancedVolcano(
-  res_KO_shrunk_df,
-  lab = res_KO_shrunk_df$external_gene_name,
-  x = "log2FoldChange",
-  y = "padj",
-  title = "-/- vs WT",
-  subtitle = "DESeq2 with apeglm-shrunk log2FC",
-  pCutoff = 0.05,
-  FCcutoff = 1
+print(
+  EnhancedVolcano(
+    res_het_shrunk_df,
+    lab = res_het_shrunk_df$external_gene_name,
+    x = "log2FoldChange",
+    y = "padj",
+    title = "+/- vs WT",
+    subtitle = "DESeq2 with apeglm-shrunk log2FC",
+    pCutoff = 0.05,
+    FCcutoff = 1
+  )
 )
 
 dev.off()
@@ -707,7 +744,7 @@ run_go_bp_gsea <- function(gene_list, output_prefix) {
     maxGSSize = 500,
     pvalueCutoff = 1,
     verbose = FALSE,
-    nPerm = 10000
+    nPermSimple = 10000
   )
   
   go_df <- as.data.frame(go_res) %>%
@@ -1005,10 +1042,15 @@ p_go_KO <- save_gsea_dotplot(
 
 save_top_gseaplot <- function(gsea_result, output_prefix, database_name, title_prefix) {
   
-  gsea_df <- as.data.frame(gsea_result)
+  gsea_df <- as.data.frame(gsea_result) %>%
+    filter(
+      !is.na(ID),
+      !is.na(p.adjust),
+      is.finite(p.adjust)
+    )
   
   if (nrow(gsea_df) == 0) {
-    message("No GSEA results to plot for: ", output_prefix, " ", database_name)
+    message("No valid GSEA results to plot for: ", output_prefix, " ", database_name)
     return(NULL)
   }
   
@@ -1036,6 +1078,8 @@ save_top_gseaplot <- function(gsea_result, output_prefix, database_name, title_p
   
   return(p)
 }
+
+
 save_top_gseaplot(
   gsea_kegg_het,
   "het_vs_WT",
