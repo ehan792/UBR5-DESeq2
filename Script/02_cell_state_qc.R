@@ -58,7 +58,7 @@ plot_pca_one <- function(D, cfg, ntop = 2000) {
       y = paste0("PC2 (", round(percent[2], 1), "%)")
     )
   ggsave(p_fig("02_qc", cfg$exp_id, file = paste0(cfg$exp_id, "__PCA.png")), p, width = 6.6, height = 5.2, dpi = 300)
-  ggsave(p_fig("02_qc", cfg$exp_id, file = paste0(cfg$exp_id, "__PCA.pdf")), p, width = 6.6, height = 5.2)
+
 
   p_scree <- tibble(PC = factor(paste0("PC", seq_len(min(10, length(percent)))), levels = paste0("PC", seq_len(min(10, length(percent))))),
                     percent_variance = percent[seq_len(min(10, length(percent)))]) %>%
