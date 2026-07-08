@@ -43,9 +43,9 @@ plot_pca_one <- function(D, cfg, ntop = 2000) {
   pca_df <- tibble::as_tibble(pr$x[, seq_len(min(10, ncol(pr$x))), drop = FALSE], rownames = "sample") %>%
     left_join(sample_meta_df(D), by = "sample")
 
-  write.csv(pca_df, p_tab("02_qc", cfg$exp_id, file = paste0(cfg$exp_id, "__PCA_coordinates.csv")), row.names = FALSE)
-  write.csv(tibble(PC = paste0("PC", seq_along(percent)), percent_variance = percent),
-            p_tab("02_qc", cfg$exp_id, file = paste0(cfg$exp_id, "__PCA_percent_variance.csv")), row.names = FALSE)
+  write_tab(pca_df, "02_qc", cfg$exp_id, out_name(cfg, "PCA_coordinates.csv"))
+  write_tab(tibble(PC = paste0("PC", seq_along(percent)), percent_variance = percent),
+            "02_qc", cfg$exp_id, out_name(cfg, "PCA_percent_variance.csv"))
 
   p <- ggplot(pca_df, aes(PC1, PC2, color = condition, label = sample_label)) +
     geom_point(size = 3) +
@@ -57,14 +57,13 @@ plot_pca_one <- function(D, cfg, ntop = 2000) {
       x = paste0("PC1 (", round(percent[1], 1), "%)"),
       y = paste0("PC2 (", round(percent[2], 1), "%)")
     )
-  ggsave(p_fig("02_qc", cfg$exp_id, file = paste0(cfg$exp_id, "__PCA.png")), p, width = 6.6, height = 5.2, dpi = 300)
-
+  save_fig(p, "02_qc", cfg$exp_id, out_name(cfg, "PCA.png"), width = 6.6, height = 5.2)
 
   p_scree <- tibble(PC = factor(paste0("PC", seq_len(min(10, length(percent)))), levels = paste0("PC", seq_len(min(10, length(percent))))),
                     percent_variance = percent[seq_len(min(10, length(percent)))]) %>%
     ggplot(aes(PC, percent_variance)) + geom_col() +
     labs(title = paste0(cfg$label, ": PCA scree"), x = NULL, y = "% variance")
-  ggsave(p_fig("02_qc", cfg$exp_id, file = paste0(cfg$exp_id, "__PCA_scree.png")), p_scree, width = 5.6, height = 4.2, dpi = 300)
+  save_fig(p_scree, "02_qc", cfg$exp_id, out_name(cfg, "PCA_scree.png"), width = 5.6, height = 4.2)
 
   invisible(pca_df)
 }
@@ -77,18 +76,18 @@ plot_sample_distance <- function(D, cfg) {
     tibble::remove_rownames() %>%
     tibble::column_to_rownames("sample")
   dist_df <- as.data.frame(dist_mat) %>% rownames_to_column("sample")
-  write.csv(dist_df, p_tab("02_qc", cfg$exp_id, file = paste0(cfg$exp_id, "__sample_distance_matrix.csv")), row.names = FALSE)
+  write_tab(dist_df, "02_qc", cfg$exp_id, out_name(cfg, "sample_distance_matrix.csv"))
 
-  png(p_fig("02_qc", cfg$exp_id, file = paste0(cfg$exp_id, "__sample_distance_heatmap.png")), width = 1800, height = 1600, res = 250)
-  pheatmap::pheatmap(
-    dist_mat,
-    annotation_col = ann,
-    annotation_row = ann,
-    annotation_colors = list(condition = COND_COLOURS[names(COND_COLOURS) %in% levels(D$sample_info$condition)]),
-    main = paste0(cfg$label, ": VST sample distances"),
-    angle_col = "45"
-  )
-  dev.off()
+  save_png("02_qc", cfg$exp_id, out_name(cfg, "sample_distance_heatmap.png"), width = 1800, height = 1600, res = 250, draw = function() {
+    pheatmap::pheatmap(
+      dist_mat,
+      annotation_col = ann,
+      annotation_row = ann,
+      annotation_colors = list(condition = COND_COLOURS[names(COND_COLOURS) %in% levels(D$sample_info$condition)]),
+      main = paste0(cfg$label, ": VST sample distances"),
+      angle_col = "45"
+    )
+  })
 }
 
 export_dispersion_estimates <- function(D, cfg) {
@@ -101,11 +100,11 @@ export_dispersion_estimates <- function(D, cfg) {
   ) %>%
     left_join(D$annot, by = "ensembl_gene_id") %>%
     dplyr::select(ensembl_gene_id, any_of(c("entrezgene_id", "external_gene_name", "gene_biotype")), everything())
-  write.csv(disp_tbl, p_tab("02_qc", cfg$exp_id, file = paste0(cfg$exp_id, "__dispersion_estimates.csv")), row.names = FALSE)
+  write_tab(disp_tbl, "02_qc", cfg$exp_id, out_name(cfg, "dispersion_estimates.csv"))
 
-  png(p_fig("02_qc", cfg$exp_id, file = paste0(cfg$exp_id, "__dispersion_fit.png")), width = 1500, height = 1150, res = 240)
-  plotDispEsts(D$dds, main = paste0(cfg$label, ": dispersion estimates"))
-  dev.off()
+  save_png("02_qc", cfg$exp_id, out_name(cfg, "dispersion_fit.png"), width = 1500, height = 1150, res = 240, draw = function() {
+    plotDispEsts(D$dds, main = paste0(cfg$label, ": dispersion estimates"))
+  })
 }
 
 run_ssgsea_one <- function(D, cfg) {
@@ -119,8 +118,8 @@ run_ssgsea_one <- function(D, cfg) {
     pivot_longer(cols = -gene_set, names_to = "sample", values_to = "ssgsea_score") %>%
     left_join(sample_meta_df(D), by = "sample")
 
-  write.csv(score_long, p_tab("02_qc", cfg$exp_id, file = paste0(cfg$exp_id, "__Hallmark_ssGSEA_scores_long.csv")), row.names = FALSE)
-  saveRDS(scores, p_data(paste0(cfg$exp_id, "__hallmark_ssgsea_scores.rds")))
+  write_tab(score_long, "02_qc", cfg$exp_id, out_name(cfg, "Hallmark_ssGSEA_scores_long.csv"))
+  saveRDS(scores, p_data(out_name(cfg, "hallmark_ssgsea_scores.rds")))
 
   priority <- intersect(MPNST_PRIORITY_HALLMARK, rownames(scores))
   if (length(priority)) {
@@ -134,7 +133,7 @@ run_ssgsea_one <- function(D, cfg) {
       scale_color_manual(values = COND_COLOURS, drop = FALSE) +
       labs(title = paste0(cfg$label, ": priority Hallmark ssGSEA"), x = NULL, y = "ssGSEA score") +
       theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
-    ggsave(p_fig("02_qc", cfg$exp_id, file = paste0(cfg$exp_id, "__priority_Hallmark_ssGSEA.png")), p, width = 12, height = 8, dpi = 300)
+    save_fig(p, "02_qc", cfg$exp_id, out_name(cfg, "priority_Hallmark_ssGSEA.png"), width = 12, height = 8)
   }
   scores
 }
@@ -165,7 +164,7 @@ run_pooled_mouse_pca <- function(deseq_all) {
   pr <- prcomp(t(mat_for_pca[top, , drop = FALSE]), center = TRUE, scale. = FALSE)
   percent <- 100 * pr$sdev^2 / sum(pr$sdev^2)
   pca_df <- tibble::as_tibble(pr$x[, 1:5, drop = FALSE], rownames = "sample") %>% left_join(meta, by = "sample")
-  write.csv(pca_df, p_tab("02_qc", "pooledMouse", file = "pooledMouse__PCA_coordinates.csv"), row.names = FALSE)
+  write_tab(pca_df, "02_qc", "pooledMouse", file = "pooledMouse__PCA_coordinates.csv")
 
   p <- ggplot(pca_df, aes(PC1, PC2, color = condition, shape = experiment, label = sample_label)) +
     geom_point(size = 3) +
@@ -177,7 +176,7 @@ run_pooled_mouse_pca <- function(deseq_all) {
       x = paste0("PC1 (", round(percent[1], 1), "%)"),
       y = paste0("PC2 (", round(percent[2], 1), "%)")
     )
-  ggsave(p_fig("02_qc", "pooledMouse", file = "pooledMouse__PCA_batch_removed.png"), p, width = 7.2, height = 5.4, dpi = 300)
+  save_fig(p, "02_qc", "pooledMouse", file = "pooledMouse__PCA_batch_removed.png", width = 7.2, height = 5.4)
 }
 
 deseq_all <- load_deseq_all()

@@ -11,12 +11,19 @@
 #     <experiment>__<contrast>__DESeq2_Wald.csv
 #     <experiment>__<contrast>__DESeq2_apeglm_shrunk.csv
 #     <experiment>__<contrast>__DE_summary.csv
+#     <experiment>__<contrast>__DESeq2_Wald_by_symbol.csv
 #
 #   results/data/deseq_all.rds
 #
 # Important implementation note:
 #   Saved objects do NOT include full cfg or OrgDb objects. This avoids the
 #   C-stack error caused by serializing Bioconductor annotation databases.
+#
+# Downstream TF-inference (decoupler + CollecTRI, Python) note:
+#   `<experiment>__<contrast>__DESeq2_Wald_by_symbol.csv` is Entrez-free,
+#   gene-symbol-indexed, and deduplicated to one row per symbol — the format
+#   decoupler's CollecTRI regulon matching expects. Load it with pandas,
+#   e.g. `df.set_index("gene_symbol")["stat"]`, per experiment/contrast.
 ################################################################################
 
 if (!exists("PROJECT_ROOT")) {
@@ -109,9 +116,7 @@ export_normalized_counts <- function(norm, annot, sample_info, cfg) {
       everything()
     )
 
-  write.csv(norm_wide,
-            p_tab("01_deseq2", cfg$exp_id, file = paste0(cfg$exp_id, "__DESeq2_normalized_counts_wide.csv")),
-            row.names = FALSE)
+  write_tab(norm_wide, "01_deseq2", cfg$exp_id, out_name(cfg, "DESeq2_normalized_counts_wide.csv"))
 
   norm_long <- as.data.frame(norm) %>%
     rownames_to_column("ensembl_gene_id") %>%
@@ -121,9 +126,7 @@ export_normalized_counts <- function(norm, annot, sample_info, cfg) {
     mutate(experiment = cfg$exp_id) %>%
     dplyr::select(experiment, condition, sample, sample_label, ensembl_gene_id, any_of(c("entrezgene_id", "external_gene_name", "gene_biotype")), normalized_count)
 
-  write.csv(norm_long,
-            p_tab("01_deseq2", cfg$exp_id, file = paste0(cfg$exp_id, "__DESeq2_normalized_counts_long.csv")),
-            row.names = FALSE)
+  write_tab(norm_long, "01_deseq2", cfg$exp_id, out_name(cfg, "DESeq2_normalized_counts_long.csv"))
 
   invisible(list(wide = norm_wide, long = norm_long))
 }
@@ -174,14 +177,31 @@ export_ubr5_percent_reference <- function(norm, annot, sample_info, cfg) {
       .groups = "drop"
     )
 
-  write.csv(per_sample,
-            p_tab("01_deseq2", cfg$exp_id, file = paste0(cfg$exp_id, "__UBR5_percent_reference_per_sample.csv")),
-            row.names = FALSE)
-  write.csv(group_summary,
-            p_tab("01_deseq2", cfg$exp_id, file = paste0(cfg$exp_id, "__UBR5_percent_reference_group_summary.csv")),
-            row.names = FALSE)
+  write_tab(per_sample, "01_deseq2", cfg$exp_id, out_name(cfg, "UBR5_percent_reference_per_sample.csv"))
+  write_tab(group_summary, "01_deseq2", cfg$exp_id, out_name(cfg, "UBR5_percent_reference_group_summary.csv"))
 
   invisible(list(per_sample = per_sample, group_summary = group_summary))
+}
+
+# Deduplicated, gene-symbol-indexed Wald statistics for one contrast — the
+# handoff format for the downstream Python TF-activity-inference step
+# (decoupler + CollecTRI), which matches regulons by gene symbol rather than
+# Ensembl/Entrez ID. Genes without a symbol are dropped; a symbol that maps
+# to multiple Ensembl IDs keeps only the row with the largest |stat|,
+# mirroring the Entrez-level collapsing used for GSEA ranking in
+# 03_gsea_and_plots.R::make_ranked_vector().
+export_tf_inference_stats <- function(wald_df, cfg, contrast_id) {
+  by_symbol <- wald_df %>%
+    filter(!is.na(external_gene_name), external_gene_name != "", !is.na(stat)) %>%
+    group_by(external_gene_name) %>%
+    slice_max(order_by = abs(stat), n = 1, with_ties = FALSE) %>%
+    ungroup() %>%
+    arrange(padj) %>%
+    dplyr::rename(gene_symbol = external_gene_name) %>%
+    dplyr::select(gene_symbol, ensembl_gene_id, any_of("entrezgene_id"), baseMean, log2FoldChange, lfcSE, stat, pvalue, padj)
+
+  write_tab(by_symbol, "01_deseq2", cfg$exp_id, out_name(cfg, paste0(contrast_id, "__DESeq2_Wald_by_symbol.csv")))
+  invisible(by_symbol)
 }
 
 run_deseq_one <- function(cfg, min_count = 10, min_samp = 3) {
@@ -205,7 +225,7 @@ run_deseq_one <- function(cfg, min_count = 10, min_samp = 3) {
     min_samp = min_samp,
     filter_rule = paste0(">=", min_count, " counts in >=", min_samp, " samples within at least one condition")
   )
-  write.csv(filter_tbl, p_tab("01_deseq2", cfg$exp_id, file = paste0(cfg$exp_id, "__filter_summary.csv")), row.names = FALSE)
+  write_tab(filter_tbl, "01_deseq2", cfg$exp_id, out_name(cfg, "filter_summary.csv"))
 
   dds <- DESeqDataSetFromMatrix(countData = std$mat[keep, , drop = FALSE], colData = si, design = ~ condition)
   dds$condition <- relevel(dds$condition, ref = cfg$ref_level)
@@ -236,12 +256,9 @@ run_deseq_one <- function(cfg, min_count = 10, min_samp = 3) {
       left_join(std$annot, by = "ensembl_gene_id") %>%
       arrange(padj)
 
-    write.csv(wald_df,
-              p_tab("01_deseq2", cfg$exp_id, file = paste0(cfg$exp_id, "__", contrast_id, "__DESeq2_Wald.csv")),
-              row.names = FALSE)
-    write.csv(shr_df,
-              p_tab("01_deseq2", cfg$exp_id, file = paste0(cfg$exp_id, "__", contrast_id, "__DESeq2_apeglm_shrunk.csv")),
-              row.names = FALSE)
+    write_tab(wald_df, "01_deseq2", cfg$exp_id, out_name(cfg, paste0(contrast_id, "__DESeq2_Wald.csv")))
+    write_tab(shr_df, "01_deseq2", cfg$exp_id, out_name(cfg, paste0(contrast_id, "__DESeq2_apeglm_shrunk.csv")))
+    export_tf_inference_stats(wald_df, cfg, contrast_id)
 
     de_summary <- tibble(
       experiment = cfg$exp_id,
@@ -255,9 +272,7 @@ run_deseq_one <- function(cfg, min_count = 10, min_samp = 3) {
       up_padj_0_05_lfc1 = sum(wald_df$padj < 0.05 & wald_df$log2FoldChange >= 1, na.rm = TRUE),
       down_padj_0_05_lfc1 = sum(wald_df$padj < 0.05 & wald_df$log2FoldChange <= -1, na.rm = TRUE)
     )
-    write.csv(de_summary,
-              p_tab("01_deseq2", cfg$exp_id, file = paste0(cfg$exp_id, "__", contrast_id, "__DE_summary.csv")),
-              row.names = FALSE)
+    write_tab(de_summary, "01_deseq2", cfg$exp_id, out_name(cfg, paste0(contrast_id, "__DE_summary.csv")))
 
     contrast_results[[contrast_id]] <- list(
       wald = wald_df,
@@ -289,7 +304,7 @@ run_deseq_one <- function(cfg, min_count = 10, min_samp = 3) {
     ubr5_reference = ubr5_reference,
     results = contrast_results
   )
-  saveRDS(bundle, p_data(paste0(cfg$exp_id, "__deseq_bundle.rds")))
+  saveRDS(bundle, p_data(out_name(cfg, "deseq_bundle.rds")))
   bundle
 }
 
@@ -318,11 +333,7 @@ export_combined_ubr5_reference_tables <- function(deseq_all) {
         ratio_to_reference, percent_of_reference, loss_fraction
       )
 
-    write.csv(
-      per_sample,
-      p_tab("01_deseq2", file = "all_experiments__UBR5_normalized_expression_ratio_to_reference_per_sample.csv"),
-      row.names = FALSE
-    )
+    write_tab(per_sample, "01_deseq2", file = "all_experiments__UBR5_normalized_expression_ratio_to_reference_per_sample.csv")
   }
 
   if (nrow(phenotype_summary)) {
@@ -338,11 +349,7 @@ export_combined_ubr5_reference_tables <- function(deseq_all) {
         sd_percent_of_reference, mean_loss_fraction, n
       )
 
-    write.csv(
-      phenotype_summary,
-      p_tab("01_deseq2", file = "all_experiments__UBR5_normalized_expression_ratio_to_reference_by_phenotype.csv"),
-      row.names = FALSE
-    )
+    write_tab(phenotype_summary, "01_deseq2", file = "all_experiments__UBR5_normalized_expression_ratio_to_reference_by_phenotype.csv")
   }
 
   invisible(list(per_sample = per_sample, phenotype_summary = phenotype_summary))

@@ -1,6 +1,6 @@
-# Refactored UBR5 / MPNST RNA-seq pipeline
+# UBR5 / MPNST RNA-seq pipeline
 
-This version reorganizes the pipeline into four main analysis scripts while preserving the prior functionality and bug fixes.
+Four analysis scripts, run in order, covering DESeq2 differential expression, cell-state QC, GSEA, and biology-panel/cross-experiment concordance for the CRISPR, mouseKD, and humanKD experiments.
 
 ## Required data files
 
@@ -44,6 +44,8 @@ results/tables/01_deseq2/mouseKD/
 results/tables/01_deseq2/humanKD/
 results/data/deseq_all.rds
 ```
+
+Each contrast also gets a `<experiment>__<contrast>__DESeq2_Wald_by_symbol.csv` — the same Wald statistics as `..._DESeq2_Wald.csv`, but indexed by gene symbol and deduplicated to one row per symbol (largest `|stat|` wins). This is the handoff format for the planned Python TF-activity-inference step (`decoupler` + CollecTRI), which resolves regulons by gene symbol rather than Ensembl/Entrez ID. In pandas: `pd.read_csv(path).set_index("gene_symbol")["stat"]`.
 
 ### 02_cell_state_qc.R
 
@@ -138,34 +140,34 @@ results/
   logs/
 ```
 
-## Preserved fixes
+## Code organization
 
-- Does not save full config/OrgDb objects inside `deseq_all.rds`, avoiding C-stack serialization issues.
-- Avoids duplicate `sample` column errors by using explicit metadata joins.
-- Uses `pheatmap(angle_col = "45")`, not numeric `45`.
-- Avoids bare `count()` calls that can be masked by other packages.
-- `run_all.R` stops on errors instead of printing a false success message.
+`00_config.R` defines a few small IO helpers used throughout `01`-`04` to avoid repeating path/filename construction at each of the ~60 table and figure exports:
 
+- `out_name(cfg_or_id, suffix)` — builds the `<experiment>__<suffix>` filename convention (`cfg_or_id` can be an experiment config list or a bare id like `"pooledMouse"`).
+- `write_tab(df, section, experiment, file)` — `write.csv()` through `p_tab()`, always `row.names = FALSE`.
+- `save_fig(plot, section, experiment, file, width, height)` — `ggsave()` through `p_fig()`, always `dpi = 300`.
+- `save_png(section, experiment, file, width, height, res, draw)` — opens a `png()` device, runs `draw()` (a base-graphics/`pheatmap()` call), and always closes the device, for the few plots that aren't `ggplot` objects.
 
-## v4 rowname patch
+## Package management
 
-This version removes stale data-frame row names before `column_to_rownames()` calls in QC and biology-panel heatmap annotations. It preserves the same analysis logic and avoids the tibble error: `.data must be a data frame without row names`. Low-count filtering/preprocessing remains in `01_import_deseq2.R` via `filter_by_group()`.
+Packages are loaded explicitly (CRAN vs. Bioconductor vs. optional) in `00_config.R`, with a fallback installer for anything missing. After install attempts, the script verifies every required package actually loaded and stops with an explicit list if not, rather than failing later with a cryptic `library()` error.
 
+Namespace collisions (e.g. `AnnotationDbi::select()`/`BiocGenerics::setdiff()` vs. the `dplyr`/base versions) are resolved by explicitly re-binding the dplyr verbs in the global session (`00_config.R`, "Namespace safety"), so unqualified calls like `filter()` or `mutate()` always resolve to `dplyr`. The [`conflicted`](https://conflicted.r-lib.org/) package was evaluated as a more idiomatic alternative but rejected: `BiocGenerics` (pulled in by `DESeq2`) re-exports several dozen base functions as S4 generics (`setdiff`, `intersect`, `table`, `order`, `unique`, `Reduce`, ...), so `conflicted` surfaces one masking error at a time, deep into a pipeline run, rather than up front. Sites that need a non-dplyr version of a masked verb call it via an explicit `::` (e.g. `AnnotationDbi::select()`).
 
-## v6 plotting/order patch
+For fully locked, publication-grade reproducibility beyond this install-if-missing fallback, pair the project with an [`renv`](https://rstudio.github.io/renv/) lockfile (`renv::init()` / `renv::snapshot()` at the project root).
 
-- CRISPR biology-panel heatmaps in file 04 now display samples as KO_1, KO_2, KO_3, Het_1, Het_2, Het_3, WT_1, WT_2, WT_3. KD experiments keep their original sample order.
-- Fixed sample/condition color handling so figures no longer rely on hard-coded WT/KD color meanings. PCA sample labels remain visible.
-- GSEA dotplots and mouse dose-priority plots now use padj color scales: dark navy = more significant, light yellow = larger padj.
-- The runner uses `withCallingHandlers()` for warnings, so ordinary warnings are logged without triggering the `muffleWarning` crash.
+## Implementation notes
 
-
-## v7 notes
-
-- File 02 was left in the earlier blue/yellow ssGSEA/PCA condition-color style.
-- Single-contrast GSEA dotplots use a dark navy to light red padj gradient.
-- Multi-experiment mouse-dose NES comparison uses separate comparison colors instead of a padj gradient.
-- File 01 exports combined UBR5 normalized-expression ratio tables across CRISPR, mouseKD, and humanKD:
+- `deseq_all.rds` and the per-experiment `<experiment>__deseq_bundle.rds` files never store the full `cfg` list or OrgDb objects, only the fields scripts 02-04 need. Serializing Bioconductor annotation databases into an `.rds` triggers a C-stack error; this avoids it.
+- Sample metadata is attached to expression/GSEA/QC tables via explicit joins on `sample` or `ensembl_gene_id`, not row order, to avoid duplicate/misaligned `sample` columns.
+- Data frames reloaded from `.rds` can carry stale row names, so `tibble::remove_rownames()` runs before every `column_to_rownames()` in the QC and biology-panel heatmap annotation code (otherwise: `.data must be a data frame without row names`).
+- `pheatmap()` is always called with `angle_col = "45"` (a string) — the numeric `45` is silently mishandled by pheatmap.
+- Bare `count()` is avoided everywhere in favor of explicit `dplyr::n()`/`n_distinct()`, since `count()` is masked by more than one loaded package (see "Package management" above).
+- `run_all.R` wraps each script in `withCallingHandlers()` so warnings are logged without an `invokeRestart("muffleWarning")` crash, and stops the pipeline (rather than printing a false success message) if any script errors.
+- CRISPR biology-panel heatmaps (`04_biology_panel_concordance.R`) show samples in a fixed order — KO_1-3, Het_1-3, WT_1-3 — via `sample_order_for_experiment()`; KD experiments keep their original column order.
+- Figure colors encode either statistical significance (GSEA dotplots and the mouse-dose priority plot: dark navy = low padj, light red = high padj) or group/comparison identity (PCA and ssGSEA: `COND_COLOURS`; mouse-dose comparison bars: `MOUSE_DOSE_COLOURS`) — never both in the same plot.
+- `01_import_deseq2.R` additionally exports combined UBR5 normalized-expression ratio-to-reference tables across all three experiments:
   - `results/tables/01_deseq2/all_experiments__UBR5_normalized_expression_ratio_to_reference_per_sample.csv`
   - `results/tables/01_deseq2/all_experiments__UBR5_normalized_expression_ratio_to_reference_by_phenotype.csv`
 

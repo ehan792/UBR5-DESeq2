@@ -43,6 +43,11 @@ GLOBAL_SEED <- 42
 set.seed(GLOBAL_SEED)
 
 # ── 1. Packages ──────────────────────────────────────────────────────────────
+# CRAN and Bioconductor dependencies are listed explicitly (rather than
+# discovered implicitly) so the required environment is documented in one
+# place. For fully locked, publication-grade reproducibility, pair this with
+# an `renv` lockfile (`renv::init()` / `renv::snapshot()` at the project root);
+# the install-if-missing logic below is a lightweight fallback for that.
 cran_pkgs <- c(
   "tidyverse", "readxl", "ggrepel", "pheatmap", "RColorBrewer",
   "scales", "matrixStats", "viridisLite"
@@ -74,6 +79,17 @@ for (p in optional_pkgs) {
   }
 }
 
+still_missing <- Filter(function(p) !requireNamespace(p, quietly = TRUE), c(cran_pkgs, bioc_pkgs))
+if (length(still_missing)) {
+  stop(
+    "Required package(s) could not be installed automatically: ",
+    paste(still_missing, collapse = ", "),
+    ". Install manually, e.g. BiocManager::install(c(",
+    paste(sprintf("\"%s\"", still_missing), collapse = ", "),
+    ")), then re-source 00_config.R."
+  )
+}
+
 suppressPackageStartupMessages({
   library(tidyverse)
   library(readxl)
@@ -94,9 +110,19 @@ suppressPackageStartupMessages({
 })
 
 # ── 1b. Namespace safety ─────────────────────────────────────────────────────
-# AnnotationDbi also defines select(), which can mask dplyr::select() and cause
-# errors like: unable to find an inherited method for function 'select' for
-# signature x = "data.frame". Keep explicit dplyr aliases in the global session.
+# AnnotationDbi (and, via DESeq2, BiocGenerics) re-export many base/dplyr verb
+# names as S4 generics — e.g. AnnotationDbi::select() vs dplyr::select(), or
+# BiocGenerics::setdiff()/intersect()/table() vs the base versions — which
+# otherwise fails with errors like "unable to find an inherited method for
+# function 'select' for signature x = 'data.frame'".
+#
+# {conflicted} was tried here and rejected: it requires an explicit
+# preference for *every* ambiguous name on the search path, and BiocGenerics
+# alone re-exports several dozen base functions, so it surfaces one masking
+# error at a time deep into a run rather than up front. Explicit dplyr
+# aliases in the global session are more predictable for this particular
+# tidyverse + Bioconductor combination. Sites that need the non-dplyr version
+# (e.g. AnnotationDbi::select()) call it via an explicit `::`.
 select     <- dplyr::select
 filter     <- dplyr::filter
 rename     <- dplyr::rename
@@ -137,6 +163,34 @@ p_fig <- function(section, experiment = NULL, file) {
   parts <- c(OUT, "figures", section, experiment)
   dir <- do.call(file.path, as.list(parts[!is.na(parts) & nzchar(parts)]))
   file.path(ensure_dir(dir), file)
+}
+
+# Build "<experiment>__<suffix>" filenames, the convention used throughout
+# scripts 01-04. `id` may be an experiment config list (uses id$exp_id) or a
+# bare experiment/group id string (e.g. "pooledMouse", "mouseDose").
+out_name <- function(id, suffix) {
+  exp_id <- if (is.list(id)) id$exp_id else id
+  paste0(exp_id, "__", suffix)
+}
+
+# Thin wrappers around write.csv()/ggsave() that route through p_tab()/p_fig()
+# so every table/figure export in 01-04 shares one place for path building
+# and CSV/plot defaults (e.g. row.names = FALSE, dpi = 300).
+write_tab <- function(df, section, experiment = NULL, file, ...) {
+  write.csv(df, p_tab(section, experiment, file = file), row.names = FALSE, ...)
+  invisible(df)
+}
+save_fig <- function(plot, section, experiment = NULL, file, width, height, dpi = 300, ...) {
+  ggsave(p_fig(section, experiment, file = file), plot = plot, width = width, height = height, dpi = dpi, ...)
+  invisible(plot)
+}
+# For base-graphics/pheatmap output, which must be drawn inside an open
+# png() device rather than returned as a ggplot object. `draw` is a
+# zero-argument function that performs the plotting call(s).
+save_png <- function(section, experiment = NULL, file, width, height, res, draw) {
+  png(p_fig(section, experiment, file = file), width = width, height = height, res = res)
+  on.exit(dev.off(), add = TRUE)
+  draw()
 }
 
 invisible(lapply(c(

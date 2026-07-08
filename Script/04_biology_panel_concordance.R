@@ -81,7 +81,7 @@ get_panel_for_experiment <- function(cfg) {
 
 export_panel_tables_and_heatmap <- function(D, cfg) {
   panel <- get_panel_for_experiment(cfg) %>% distinct()
-  write.csv(panel, p_tab("04_biology_concordance", cfg$exp_id, file = paste0(cfg$exp_id, "__biology_gene_panel_used.csv")), row.names = FALSE)
+  write_tab(panel, "04_biology_concordance", cfg$exp_id, out_name(cfg, "biology_gene_panel_used.csv"))
 
   # Expression heatmap using VST values. Match by gene symbol.
   annot_panel <- D$annot %>%
@@ -106,15 +106,7 @@ export_panel_tables_and_heatmap <- function(D, cfg) {
     dplyr::filter(!ensembl_gene_id %in% rownames(vsd_mat))
 
   if (nrow(annot_panel_missing)) {
-    write.csv(
-      annot_panel_missing,
-      p_tab(
-        "04_biology_concordance",
-        cfg$exp_id,
-        file = paste0(cfg$exp_id, "__biology_gene_panel_dropped_not_in_filtered_VST_matrix.csv")
-      ),
-      row.names = FALSE
-    )
+    write_tab(annot_panel_missing, "04_biology_concordance", cfg$exp_id, out_name(cfg, "biology_gene_panel_dropped_not_in_filtered_VST_matrix.csv"))
     message(
       "  Note: ", nrow(annot_panel_missing),
       " panel gene rows were not present in the filtered VST matrix for ",
@@ -144,17 +136,18 @@ export_panel_tables_and_heatmap <- function(D, cfg) {
 
   expr_z <- t(scale(t(expr)))
   expr_z[is.na(expr_z)] <- 0
-  png(p_fig("04_biology_concordance", cfg$exp_id, file = paste0(cfg$exp_id, "__biology_panel_VST_zscore_heatmap.png")), width = 1900, height = max(1400, 90 * nrow(expr_z)), res = 250)
-  pheatmap::pheatmap(
-    expr_z,
-    annotation_col = ann_col,
-    show_colnames = TRUE,
-    cluster_cols = FALSE,
-    fontsize_row = 7,
-    main = paste0(cfg$label, ": biology panel VST z-score"),
-    angle_col = "45"
-  )
-  dev.off()
+  save_png("04_biology_concordance", cfg$exp_id, out_name(cfg, "biology_panel_VST_zscore_heatmap.png"),
+           width = 1900, height = max(1400, 90 * nrow(expr_z)), res = 250, draw = function() {
+    pheatmap::pheatmap(
+      expr_z,
+      annotation_col = ann_col,
+      show_colnames = TRUE,
+      cluster_cols = FALSE,
+      fontsize_row = 7,
+      main = paste0(cfg$label, ": biology panel VST z-score"),
+      angle_col = "45"
+    )
+  })
 
   # Per-contrast panel LFC tables.
   for (contrast_id in names(D$results)) {
@@ -162,7 +155,7 @@ export_panel_tables_and_heatmap <- function(D, cfg) {
       inner_join(panel, by = c("external_gene_name" = "gene_symbol")) %>%
       arrange(class, padj) %>%
       dplyr::select(class, external_gene_name, ensembl_gene_id, any_of(c("entrezgene_id")), baseMean, log2FoldChange, lfcSE, stat, pvalue, padj)
-    write.csv(tab, p_tab("04_biology_concordance", cfg$exp_id, file = paste0(cfg$exp_id, "__", contrast_id, "__biology_panel_DESeq2_Wald.csv")), row.names = FALSE)
+    write_tab(tab, "04_biology_concordance", cfg$exp_id, out_name(cfg, paste0(contrast_id, "__biology_panel_DESeq2_Wald.csv")))
   }
   invisible(panel)
 }
@@ -188,12 +181,12 @@ make_deg_table <- function(D, cfg, padj_cutoff = 0.05, lfc_cutoff = 1) {
 
 export_deg_tables <- function(deseq_all) {
   all_deg <- bind_rows(lapply(names(deseq_all), function(eid) make_deg_table(deseq_all[[eid]], EXPERIMENTS[[eid]])))
-  write.csv(all_deg, p_tab("04_biology_concordance", "crossExperiment", file = "all_experiments__DEG_lists_padj0.05_lfc1.csv"), row.names = FALSE)
+  write_tab(all_deg, "04_biology_concordance", "crossExperiment", file = "all_experiments__DEG_lists_padj0.05_lfc1.csv")
 
   deg_summary <- all_deg %>%
     group_by(experiment, contrast, deg_direction) %>%
     summarise(n_genes = n_distinct(ensembl_gene_id), .groups = "drop")
-  write.csv(deg_summary, p_tab("04_biology_concordance", "crossExperiment", file = "all_experiments__DEG_count_summary.csv"), row.names = FALSE)
+  write_tab(deg_summary, "04_biology_concordance", "crossExperiment", file = "all_experiments__DEG_count_summary.csv")
   all_deg
 }
 
@@ -250,7 +243,7 @@ plot_lfc_concordance_pair <- function(df_a, df_b, label_a, label_b, file_prefix)
       label_gene = ifelse(padj_a < 0.05 & padj_b < 0.05 & abs(lfc_a) + abs(lfc_b) > 3, external_gene_name, NA_character_)
     )
   rho <- suppressWarnings(cor(joined$lfc_a, joined$lfc_b, method = "spearman", use = "complete.obs"))
-  write.csv(joined, p_tab("04_biology_concordance", "crossExperiment", file = paste0(file_prefix, "__LFC_concordance_table.csv")), row.names = FALSE)
+  write_tab(joined, "04_biology_concordance", "crossExperiment", file = paste0(file_prefix, "__LFC_concordance_table.csv"))
 
   p <- ggplot(joined, aes(lfc_a, lfc_b)) +
     geom_hline(yintercept = 0, linewidth = 0.25, linetype = "dashed") +
@@ -265,7 +258,7 @@ plot_lfc_concordance_pair <- function(df_a, df_b, label_a, label_b, file_prefix)
       y = paste0(label_b, " log2FC"),
       color = NULL
     )
-  ggsave(p_fig("04_biology_concordance", "crossExperiment", file = paste0(file_prefix, "__LFC_concordance.png")), p, width = 7, height = 6, dpi = 300)
+  save_fig(p, "04_biology_concordance", "crossExperiment", file = paste0(file_prefix, "__LFC_concordance.png"), width = 7, height = 6)
   tibble(pair = file_prefix, label_a = label_a, label_b = label_b, spearman_rho = rho, n_genes = nrow(joined))
 }
 
@@ -290,7 +283,7 @@ run_concordance <- function(deseq_all) {
     }
   }
   out <- bind_rows(summaries)
-  if (nrow(out)) write.csv(out, p_tab("04_biology_concordance", "crossExperiment", file = "all_LFC_concordance_summary.csv"), row.names = FALSE)
+  if (nrow(out)) write_tab(out, "04_biology_concordance", "crossExperiment", file = "all_LFC_concordance_summary.csv")
 }
 
 # ── Run ──────────────────────────────────────────────────────────────────────
@@ -303,7 +296,7 @@ if (nrow(all_deg)) {
   # Use number of tested genes from the largest DESeq2 result as approximate universe.
   universe_n <- max(unlist(lapply(deseq_all, function(D) nrow(D$results[[1]]$wald))))
   overlap <- compute_pairwise_overlap(all_deg, universe_n = universe_n)
-  write.csv(overlap, p_tab("04_biology_concordance", "crossExperiment", file = "all_experiments__pairwise_DEG_overlap_Fisher_Jaccard.csv"), row.names = FALSE)
+  write_tab(overlap, "04_biology_concordance", "crossExperiment", file = "all_experiments__pairwise_DEG_overlap_Fisher_Jaccard.csv")
 }
 run_concordance(deseq_all)
 
