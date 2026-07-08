@@ -1,0 +1,3 @@
+"experiment","gene_symbol","ensembl_gene_id","reference_condition","condition","mean_normalized_count","sd_normalized_count","mean_percent_of_reference","sd_percent_of_reference","mean_remaining_fraction","mean_loss_fraction","n"
+"humanKD","UBR5","ENSG00000104517","Control","Control",25018.1548016433,596.357411050498,100,2.38369862117618,1,-7.51713506256616e-17,3
+"humanKD","UBR5","ENSG00000104517","Control","KD",1891.07259280448,532.223530902306,7.55880122973844,2.12734925945596,0.0755880122973844,0.924411987702616,3

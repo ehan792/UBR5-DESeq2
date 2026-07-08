@@ -1,0 +1,4 @@
+"pair","label_a","label_b","spearman_rho","n_genes"
+"CRISPR_KO_vs_Het","CRISPR__KO_vs_WT","CRISPR__Het_vs_WT",0.682588439286013,16103
+"mouseKD_vs_CRISPR_KO","mouseKD__KD_vs_Control","CRISPR__KO_vs_WT",-0.168251758336719,13124
+"mouseKD_vs_CRISPR_Het","mouseKD__KD_vs_Control","CRISPR__Het_vs_WT",-0.0639671204278096,13124

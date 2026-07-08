@@ -1,0 +1,4 @@
+"experiment","gene_symbol","ensembl_gene_id","reference_condition","condition","mean_normalized_count","sd_normalized_count","mean_percent_of_reference","sd_percent_of_reference","mean_remaining_fraction","mean_loss_fraction","n"
+"CRISPR","Ubr5","ENSMUSG00000037487","WT","WT",8358.19612011415,1302.4755040636,100,15.5832129965121,1,0,3
+"CRISPR","Ubr5","ENSMUSG00000037487","WT","Het",4042.4173385495,136.857740763989,48.3647102850501,1.63740762716297,0.483647102850501,0.516352897149499,3
+"CRISPR","Ubr5","ENSMUSG00000037487","WT","KO",2931.89508407994,1020.22596610368,35.0780843371727,12.2062936959386,0.350780843371727,0.649219156628273,3

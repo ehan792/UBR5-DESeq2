@@ -1,0 +1,9 @@
+"experiment","contrast","deg_direction","n_genes"
+"CRISPR","Het_vs_WT","down",605
+"CRISPR","Het_vs_WT","up",361
+"CRISPR","KO_vs_WT","down",500
+"CRISPR","KO_vs_WT","up",408
+"humanKD","KD_vs_Control","down",8793
+"humanKD","KD_vs_Control","up",7100
+"mouseKD","KD_vs_Control","down",971
+"mouseKD","KD_vs_Control","up",909

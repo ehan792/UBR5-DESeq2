@@ -1,0 +1,7 @@
+"script","status","started","finished","message"
+"01_import_deseq2.R","success",2026-07-08 15:16:29.769344,2026-07-08 15:17:54.367031,""
+"02_cell_state_qc.R","success",2026-07-08 15:17:54.372852,2026-07-08 15:18:20.666506,""
+"03_gsea_and_plots.R","success_with_warnings",2026-07-08 15:18:20.669272,2026-07-08 15:20:20.199712,"[38;5;232mRemoved 3 rows containing missing values or values outside the scale range
+(`geom_point()`).[39m | [38;5;232mRemoved 5 rows containing missing values or values outside the scale range
+(`geom_point()`).[39m | There are ties in the preranked stats (0.03% of the list).
+The order of those tied genes will be arbitrary, which may produce unexpected results."

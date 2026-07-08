@@ -1,2 +1,0 @@
-"contrast","treatment_group","control_group","samples_used","n_samples","min_count","min_samples_per_group","genes_before_filtering","genes_after_filtering","genes_removed"
-"human_KD_vs_Control","KD","Control","sample.shrubr5_3_2002;sample.shrubr5_2_2002;sample.shrubr5_1_2002;sample.jh_2_002_3;sample.jh_2_002_2;sample.jh_2_002_1",6,10,3,55093,22835,32258

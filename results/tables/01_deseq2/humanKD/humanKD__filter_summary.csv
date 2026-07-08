@@ -1,0 +1,2 @@
+"experiment","label","genes_raw","genes_kept","genes_removed","min_count","min_samp","filter_rule"
+"humanKD","Human UBR5 knockdown",55093,22844,32249,10,3,">=10 counts in >=3 samples within at least one condition"

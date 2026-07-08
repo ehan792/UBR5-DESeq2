@@ -1,0 +1,2 @@
+"experiment","contrast","tested_nonNA_padj","padj_lt_0_10","padj_lt_0_05","padj_lt_0_01","up_padj_0_05","down_padj_0_05","up_padj_0_05_lfc1","down_padj_0_05_lfc1"
+"CRISPR","KO_vs_WT",16100,3647,2966,1979,1326,1640,408,500
