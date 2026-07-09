@@ -4,4 +4,8 @@
 .Ruserdata
 .positai
 results/data/
-results/data/
+
+# Python
+.venv/
+__pycache__/
+*.pyc

@@ -1,6 +1,6 @@
 # UBR5 / MPNST RNA-seq pipeline
 
-Four analysis scripts, run in order, covering DESeq2 differential expression, cell-state QC, GSEA, and biology-panel/cross-experiment concordance for the CRISPR, mouseKD, and humanKD experiments.
+Five analysis scripts, run in order: four in R (00-04) covering DESeq2 differential expression, cell-state QC, GSEA, and biology-panel/cross-experiment concordance, then one in Python (05) covering transcription-factor activity inference — for the CRISPR, mouseKD, and humanKD experiments.
 
 ## Required data files
 
@@ -17,11 +17,25 @@ Optional biology panel:
 
 ## Run
 
+### R stages (00-04)
+
 Open RStudio in the script folder or project folder, then run:
 
 ```r
 Sys.setenv(UBR5_PROJECT_ROOT = "/path/to/UBR5-DESeq2") # optional but recommended
 source("run_all.R")
+```
+
+### Python stage (05)
+
+Requires 01-04 to have already run (it reads their `*_DESeq2_Wald_by_symbol.csv` outputs). Uses a virtual environment, isolated from the R setup:
+
+```bash
+cd Script
+python3 -m venv ../.venv
+source ../.venv/bin/activate   # Windows: ..\.venv\Scripts\activate
+pip install -r requirements.txt
+python 05_tf_inference.py
 ```
 
 ## Scripts
@@ -111,6 +125,41 @@ results/tables/04_biology_concordance/crossExperiment/
 results/figures/04_biology_concordance/crossExperiment/
 ```
 
+### 05_tf_inference.py
+
+Infers transcription factor (TF) activity per experiment/contrast using [decoupler](https://decoupler.readthedocs.io)'s Univariate Linear Model (ULM) against the [CollecTRI](https://github.com/saezlab/CollecTRI) TF-target regulon network (fetched via OmniPath, cached locally per organism). Input is each contrast's `DESeq2_Wald_by_symbol.csv` from `01_import_deseq2.R` — no additional normalization needed, since ULM is designed to run directly on contrast-level statistics (Wald stat, logFC, etc.), and the Wald statistic (rather than raw log2FoldChange) is used specifically because it's variance-aware.
+
+Outputs go to:
+
+```text
+results/tables/05_tf_inference/<experiment>/
+  <experiment>__TF_activity_ulm_wide.csv   (rows=contrast, columns=TF)
+  <experiment>__TF_activity_ulm_long.csv   (one row per experiment/contrast/TF, sorted by padj, with n_targets)
+results/figures/05_tf_inference/<experiment>/
+  <experiment>__<contrast>__top_TF_barplot.png
+results/tables/05_tf_inference/mouseDose/
+  mouseDose__all_experiments_TF_activity_long.csv
+  mouseDose__consistent_TF_activity_table.csv
+results/figures/05_tf_inference/mouseDose/
+  mouseDose__consistent_TF_activity_bars.png
+results/data/collectri_<organism>.csv      (cached network, one file per organism)
+```
+
+#### Statistical methods
+
+**Model.** For one contrast and one TF, ULM regresses *every gene in the filtered gene universe* (not just that TF's targets) against the TF's CollecTRI regulon weight: +1 for an activating target, -1 for a repressing target, and **0 for every non-target gene**, which stays in the fit as an implicit background/null class. The reported score is the t-value of the regression slope; p-values are two-sided and Benjamini-Hochberg adjusted by decoupler, independently per contrast (the correct scope, since each contrast is one family of ~600-700 simultaneous TF tests). This was verified empirically against the installed decoupler version (2.1.6) rather than assumed from documentation.
+
+**Consequence for `tmin`/regulon size.** Because non-target genes stay in the regression, degrees of freedom scale with the *total* gene universe (~15,000-23,000), not a TF's regulon size — a small regulon is not a classical low-power problem, it's a low-*evidence* problem: the score can be driven by a handful of genes. `TMIN = 5` (decoupler's own default) is kept rather than raised, because comparing `tmin=5` vs. `tmin=10` on this data showed raising it only ever drops already-significant TFs (never rescues one) — e.g. `Zfp24`, CRISPR's most significant hit (padj=0.00003), rests on exactly 5 target genes and would be silently discarded at `tmin=10`. Instead, every output table/figure reports each TF's actual `n_targets` (CollecTRI regulon size *intersected with the tested gene universe*, not the raw CollecTRI regulon size) so evidence strength is visible rather than hidden behind one cutoff.
+
+**Method choice.** ULM (rather than a multi-method consensus) is used because it's what decoupler's own CollecTRI tutorial recommends, backed by the benchmarking in Badia-i-Mompel et al. (2022) showing ULM performs best paired with this network.
+
+**Mouse-dose comparison.** `plot_mouse_dose_tfs()` mirrors `03_gsea_and_plots.R`'s mouse-dose Hallmark NES comparison, but since there's no TF equivalent of the hand-curated `MPNST_PRIORITY_HALLMARK` list, the "priority" TF set is chosen by a reproducible, data-driven criterion instead: significant (padj<0.05) in at least 2 of the 3 mouse contrasts (mouseKD, CRISPR Het, CRISPR KO) **with agreeing sign**. Sign agreement matters: an earlier version of this filter only checked co-significance, which let TFs significant-but-*opposite-direction* across experiments (e.g. `Barx2`, `Pitx2`, `Zbtb18`) get mislabeled as "consistent." This mirrors the directional-agreement check `04_biology_panel_concordance.R` already does at the gene level via Spearman correlation. CRISPR and mouseKD also have slightly different filtered gene universes (15,428 vs. 15,028 genes), so absolute score magnitudes aren't perfectly calibrated against an identical background between the two experiments — relative direction/ranking comparisons remain meaningful.
+
+**Citations:**
+
+- Badia-i-Mompel P, Vélez Santiago J, Braunger J, et al. (2022). decoupleR: ensemble of computational methods to infer biological activities from omics data. *Bioinformatics Advances*, 2(1), vbac016. https://doi.org/10.1093/bioadv/vbac016
+- Müller-Dott S, Tsirvouli E, Vazquez M, et al. (2023). Expanding the coverage of regulons from high-confidence prior knowledge for accurate estimation of transcription factor activities (CollecTRI). *Nucleic Acids Research*, 51(20), 10934-10949. https://doi.org/10.1093/nar/gkad841
+
 ## Folder organization
 
 Contrasts are not separated into extra subfolders. Instead, contrast names are embedded directly in filenames, for example:
@@ -132,10 +181,12 @@ results/
     02_qc/
     03_gsea/
     04_biology_concordance/
+    05_tf_inference/
   figures/
     02_qc/
     03_gsea/
     04_biology_concordance/
+    05_tf_inference/
   data/
   logs/
 ```
@@ -156,6 +207,8 @@ Packages are loaded explicitly (CRAN vs. Bioconductor vs. optional) in `00_confi
 Namespace collisions (e.g. `AnnotationDbi::select()`/`BiocGenerics::setdiff()` vs. the `dplyr`/base versions) are resolved by explicitly re-binding the dplyr verbs in the global session (`00_config.R`, "Namespace safety"), so unqualified calls like `filter()` or `mutate()` always resolve to `dplyr`. The [`conflicted`](https://conflicted.r-lib.org/) package was evaluated as a more idiomatic alternative but rejected: `BiocGenerics` (pulled in by `DESeq2`) re-exports several dozen base functions as S4 generics (`setdiff`, `intersect`, `table`, `order`, `unique`, `Reduce`, ...), so `conflicted` surfaces one masking error at a time, deep into a pipeline run, rather than up front. Sites that need a non-dplyr version of a masked verb call it via an explicit `::` (e.g. `AnnotationDbi::select()`).
 
 For fully locked, publication-grade reproducibility beyond this install-if-missing fallback, pair the project with an [`renv`](https://rstudio.github.io/renv/) lockfile (`renv::init()` / `renv::snapshot()` at the project root).
+
+`05_tf_inference.py` (Python) uses the ecosystem's own equivalent convention instead: an isolated virtual environment (`.venv/`, not committed — see `.gitignore`) plus a version-pinned `requirements.txt`, rather than installing into a shared global package library the way R's `library()` implicitly does.
 
 ## Implementation notes
 
